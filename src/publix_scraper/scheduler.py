@@ -23,14 +23,14 @@ logger = get_logger(__name__)
 
 def update_stores():
     """
-    Update stores.json using StoreLocator before scraping
-    Creates stores.json if it doesn't exist
+    Always fetch ALL stores from Publix API and update stores.json before scraping
+    This ensures we have the latest store data before each scraping job
     
     Returns:
         bool: True if update successful, False otherwise
     """
     logger.info("=" * 80)
-    logger.info("Updating stores.json")
+    logger.info("Fetching ALL stores from Publix API")
     logger.info("=" * 80)
     
     try:
@@ -44,24 +44,34 @@ def update_stores():
         if stores_exist:
             all_stores_before = store_locator.get_all_target_stores()
             logger.info(f"Current stores.json found: {len(all_stores_before)} stores")
-            if len(all_stores_before) == 0:
-                logger.info("stores.json is empty. Will fetch stores from API...")
         else:
-            logger.info("stores.json not found. Will fetch stores from API...")
+            logger.info("stores.json not found.")
         
-        # Update/validate stores.json (will fetch from API if needed)
-        # fetch_if_empty=True ensures we fetch stores if file is missing or empty
-        stores_valid = store_locator.update_stores_json(fetch_if_empty=True)
+        # Always fetch stores from API to ensure we have the latest data
+        logger.info("Fetching ALL stores from Publix API to update stores.json...")
+        stores_dict = store_locator._fetch_stores_from_api()
+        
+        if len(stores_dict.get("FL", [])) == 0 and len(stores_dict.get("GA", [])) == 0:
+            logger.error("[ERROR] Failed to fetch stores from API")
+            logger.error("   Unable to fetch stores. Aborting scraping job.")
+            return False
+        
+        # Save fetched stores to JSON
+        if not store_locator._save_stores_to_json(stores_dict):
+            logger.error("[ERROR] Failed to save stores to stores.json")
+            return False
+        
+        # Clear cache to reload
+        store_locator._stores_cache = None
         
         # Get all stores to verify
         all_stores = store_locator.get_all_target_stores()
         
-        if not stores_valid or len(all_stores) == 0:
-            logger.error("[ERROR] stores.json is missing or empty after fetch attempt")
-            logger.error("   Unable to fetch or validate stores. Aborting scraping job.")
+        if len(all_stores) == 0:
+            logger.error("[ERROR] No stores found after fetch. Cannot proceed with scraping.")
             return False
         
-        logger.info(f"[SUCCESS] Successfully updated/validated stores.json")
+        logger.info(f"[SUCCESS] Successfully fetched and updated stores.json")
         logger.info(f"   Total stores: {len(all_stores)}")
         logger.info(f"   FL stores: {len([s for s in all_stores if s.state == 'FL'])}")
         logger.info(f"   GA stores: {len([s for s in all_stores if s.state == 'GA'])}")

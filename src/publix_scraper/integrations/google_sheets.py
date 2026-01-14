@@ -365,3 +365,73 @@ class GoogleSheetsHandler:
         except Exception as e:
             logger.error(f"Error creating/updating weekly tab '{tab_name}': {str(e)}")
             raise
+    
+    def create_monthly_tab(self, month_year: str, products: List[Product]) -> Tuple[str, int, int, str]:
+        """
+        Create or update a monthly tab in the monthly sheet and add all monthly products
+        
+        Args:
+            month_year: Month-year string (e.g., "2026-01")
+            products: List of Product objects for the entire month
+            
+        Returns:
+            Tuple of (URL to the sheet tab, new_records_count, total_records_count, sheet_id)
+        """
+        try:
+            monthly_sheet, sheet_id = self.get_or_create_monthly_sheet(month_year)
+            
+            # Create tab name for monthly report
+            tab_name = f"Monthly Report - {month_year}"
+            
+            # Check if tab already exists
+            try:
+                worksheet = monthly_sheet.worksheet(tab_name)
+                logger.info(f"Monthly tab '{tab_name}' already exists, updating...")
+                
+                # Clear existing data
+                worksheet.clear()
+                
+                # Format data for output
+                rows = self.format_products_for_sheet(products)
+                
+                # Write data to sheet
+                worksheet.update('A1', rows)
+                
+                new_records_count = len(products)
+                total_records_count = len(products)
+                logger.info(f"Updated monthly tab '{tab_name}' with {len(products)} records")
+            except gspread.WorksheetNotFound:
+                # Create new monthly tab
+                worksheet = monthly_sheet.add_worksheet(
+                    title=tab_name,
+                    rows=len(products) + 1,
+                    cols=10
+                )
+                logger.info(f"Created new monthly tab: {tab_name} in monthly sheet")
+                
+                # Format data for output
+                rows = self.format_products_for_sheet(products)
+                
+                # Write data to sheet
+                worksheet.update('A1', rows)
+                
+                new_records_count = len(products)
+                total_records_count = len(products)
+                logger.info(f"Populated new monthly tab '{tab_name}' with {len(products)} records")
+            
+            # Format header row (bold)
+            worksheet.format('A1:J1', {
+                'textFormat': {'bold': True},
+                'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
+            })
+            
+            # Auto-resize columns
+            worksheet.columns_auto_resize(0, 9)
+            
+            # Return URL to the worksheet
+            sheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit#gid={worksheet.id}"
+            return sheet_url, new_records_count, total_records_count, sheet_id
+            
+        except Exception as e:
+            logger.error(f"Error creating/updating monthly tab '{tab_name}': {str(e)}")
+            raise
