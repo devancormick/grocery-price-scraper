@@ -2,13 +2,14 @@
 Google Sheets integration for Publix price data
 Supports daily tabs and weekly tabs based on project requirements
 """
-from datetime import datetime
-from typing import List, Tuple
+from datetime import datetime, date
+from typing import List, Tuple, Optional
 import gspread
 from google.oauth2.service_account import Credentials
 from ..core.config import GOOGLE_SHEETS_CREDENTIALS_PATH, GOOGLE_SHEET_ID, DATE_FORMAT
 from ..core.models import Product
 from ..utils.logging_config import get_logger
+from ..utils.week_calculator import get_month_year_string
 
 logger = get_logger(__name__)
 
@@ -241,3 +242,129 @@ class GoogleSheetsHandler:
     def get_sheet_url(self) -> str:
         """Get the base URL of the Google Sheet"""
         return f"https://docs.google.com/spreadsheets/d/{self.sheet_id}/edit"
+    
+    def get_or_create_monthly_sheet(self, month_year: str = None) -> Tuple[gspread.Spreadsheet, str]:
+        """
+        Get or create a monthly sheet for the given month-year
+        
+        Args:
+            month_year: Month-year string in format "YYYY-MM" (default: current month)
+        
+        Returns:
+            Tuple of (spreadsheet object, sheet_id)
+        """
+        if month_year is None:
+            month_year = get_month_year_string()
+        
+        sheet_title = f"Publix Soda Prices - {month_year}"
+        
+        try:
+            # Try to find existing sheet by title
+            # Search through all spreadsheets the service account has access to
+            try:
+                # List all spreadsheets
+                all_sheets = self.client.openall()
+                for sheet in all_sheets:
+                    if sheet.title == sheet_title:
+                        logger.info(f"Found existing monthly sheet: {sheet_title}")
+                        return sheet, sheet.id
+                
+                # Not found, create new monthly sheet
+                logger.info(f"Monthly sheet '{sheet_title}' not found, creating new one...")
+                sheet = self.client.create(sheet_title)
+                logger.info(f"Created new monthly sheet: {sheet_title} (ID: {sheet.id})")
+                
+                # Note: The sheet is automatically accessible to the service account
+                # If you need to share with other users, add sharing logic here
+                
+                return sheet, sheet.id
+                
+            except Exception as search_error:
+                # If search fails, try to create new sheet
+                logger.warning(f"Error searching for sheet: {search_error}, creating new one...")
+                sheet = self.client.create(sheet_title)
+                logger.info(f"Created new monthly sheet: {sheet_title} (ID: {sheet.id})")
+                return sheet, sheet.id
+                
+        except Exception as e:
+            logger.error(f"Error getting/creating monthly sheet: {str(e)}")
+            raise
+    
+    def create_weekly_tab_in_monthly_sheet(self, week: int, products: List[Product], month_year: str = None) -> Tuple[str, int, int, str]:
+        """
+        Create or update a weekly tab in the monthly sheet
+        
+        Args:
+            week: Week number (1-4)
+            products: List of Product objects for this week
+            month_year: Month-year string in format "YYYY-MM" (default: current month)
+        
+        Returns:
+            Tuple of (URL to the sheet tab, new_records_count, total_records_count, sheet_id)
+        """
+        if month_year is None:
+            month_year = get_month_year_string()
+        
+        # Get or create the monthly sheet
+        monthly_sheet, sheet_id = self.get_or_create_monthly_sheet(month_year)
+        
+        tab_name = f"Week {week}"
+        
+        try:
+            # Check if tab already exists
+            try:
+                worksheet = monthly_sheet.worksheet(tab_name)
+                logger.info(f"Tab '{tab_name}' already exists in monthly sheet")
+                
+                # Get existing data to check for duplicates
+                existing_data = worksheet.get_all_values()
+                existing_count = len(existing_data) - 1 if len(existing_data) > 1 else 0
+                
+                # Format new products
+                new_rows = self.format_products_for_sheet(products)
+                # Remove header row since we're appending
+                new_rows = new_rows[1:]
+                
+                # Append new records
+                if new_rows:
+                    worksheet.append_rows(new_rows)
+                    logger.info(f"Added {len(new_rows)} new records to existing tab")
+                
+                new_records_count = len(new_rows)
+                total_records_count = existing_count + new_records_count
+                
+            except gspread.exceptions.WorksheetNotFound:
+                # Create new worksheet
+                worksheet = monthly_sheet.add_worksheet(
+                    title=tab_name,
+                    rows=len(products) + 100,
+                    cols=10
+                )
+                logger.info(f"Created new tab: {tab_name} in monthly sheet")
+                
+                # Format data for output
+                rows = self.format_products_for_sheet(products)
+                
+                # Write data to sheet
+                worksheet.update('A1', rows)
+                
+                new_records_count = len(products)
+                total_records_count = len(products)
+                logger.info(f"Populated new tab '{tab_name}' with {len(products)} records")
+            
+            # Format header row (bold)
+            worksheet.format('A1:J1', {
+                'textFormat': {'bold': True},
+                'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
+            })
+            
+            # Auto-resize columns
+            worksheet.columns_auto_resize(0, 9)
+            
+            # Return URL to the worksheet
+            sheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit#gid={worksheet.id}"
+            return sheet_url, new_records_count, total_records_count, sheet_id
+            
+        except Exception as e:
+            logger.error(f"Error creating/updating weekly tab '{tab_name}': {str(e)}")
+            raise
