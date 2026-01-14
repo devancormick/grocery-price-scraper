@@ -75,9 +75,9 @@ Week: {week}
             body += f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
             body += f"Summary:\n"
             body += f"- Products scraped: {product_count}\n"
-            if new_count is not None:
-                body += f"- New products: {new_count}\n"
-                body += f"- Duplicate products: {product_count - new_count}\n"
+            # if new_count is not None:
+            #     body += f"- New products: {new_count}\n"
+            #     body += f"- Duplicate products: {product_count - new_count}\n"
             body += f"- Stores covered: {store_count}\n"
             body += f"- Week: {week}\n\n"
             body += f"✅ Data has been successfully collected and uploaded to Google Sheets.\n\n"
