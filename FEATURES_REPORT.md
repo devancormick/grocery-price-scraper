@@ -2,7 +2,7 @@
 
 ## Overview
 
-Automated solution for collecting soda product prices from all Publix stores in Florida (889 stores) and Georgia (220 stores). Performs weekly data collection and delivers datasets via Google Sheets and email.
+Automated solution for collecting soda product prices from all Publix stores in Florida (909 stores) and Georgia (222 stores). Performs weekly data collection and delivers datasets via Google Sheets and email.
 
 ## Key Features
 
