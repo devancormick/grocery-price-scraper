@@ -135,8 +135,18 @@ def generate_weekly_dataset(
     weekly_storage = DataStorage(output_file=weekly_output, format=output_format)
     
     # Temporary storage for incremental collection
+    temp_file = DATA_DIR / f"temp_week{week}_{month_year.replace('-', '')}.csv"
+    
+    # Clean up any existing temp file before starting
+    if temp_file.exists():
+        try:
+            temp_file.unlink()
+            logger.info(f"✅ Removed existing temporary file: {temp_file.name}")
+        except Exception as e:
+            logger.warning(f"⚠️  Could not remove existing temp file {temp_file.name}: {e}")
+    
     temp_storage = DataStorage(
-        output_file=DATA_DIR / f"temp_week{week}_{month_year.replace('-', '')}.csv",
+        output_file=temp_file,
         format="csv"
     )
     deduplicator = DeduplicationHandler(temp_storage)
@@ -332,14 +342,13 @@ def generate_weekly_dataset(
     logger.info(f"  Month-Year: {month_year}")
     logger.info("=" * 80)
     
-    # Clean up temporary file
-    temp_file = DATA_DIR / f"temp_week{week}_{month_year.replace('-', '')}.csv"
+    # Clean up temporary file (already defined earlier, reuse the variable)
     if temp_file.exists():
         try:
             temp_file.unlink()
-            logger.info(f"✅ Cleaned up temporary file: {temp_file}")
+            logger.info(f"✅ Cleaned up temporary file: {temp_file.name}")
         except Exception as e:
-            logger.warning(f"⚠️  Could not delete temporary file {temp_file}: {e}")
+            logger.warning(f"⚠️  Could not delete temporary file {temp_file.name}: {e}")
     
     return weekly_output
 
