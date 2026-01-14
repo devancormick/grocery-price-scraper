@@ -1,0 +1,65 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Virtual environments
+env/
+venv/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs (will be mounted as volume)
+logs/*.log
+
+# Data (will be mounted as volume)
+data/*.json
+data/*.csv
+
+# Output (will be mounted as volume)
+output/
+
+# Documentation
+*.md
+!README.md
+
+# Docker files (don't copy into image)
+docker/
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Scripts (optional - can include if needed)
+# *.sh
+
+# Test files
+test_*.py
+*_test.py
+tests/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp

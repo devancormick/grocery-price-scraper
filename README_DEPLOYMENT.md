@@ -42,13 +42,39 @@ python3 generate_weekly_dataset.py --week 2
 
 ## Deployment Options
 
-### Option 1: Cron Job (Linux/macOS)
+### Option 1: Docker (Recommended) ⭐
 
-Add to crontab (`crontab -e`):
+**Best for**: Production deployments, client environments, consistent environments
 
+**Quick Start:**
 ```bash
-# Run daily at 2:00 AM UTC (adjust timezone as needed)
-0 2 * * * cd /path/to/grocery-price-scraper && /usr/bin/python3 run_daily.py >> logs/cron.log 2>&1
+# 1. Configure environment
+cp .env.example .env
+# Edit .env with your settings
+
+# 2. Start container
+./docker-start.sh
+
+# 3. View logs
+docker-compose logs -f scraper
+```
+
+**Features:**
+- ✅ Isolated environment (no system dependencies)
+- ✅ Easy deployment (one command)
+- ✅ Auto-restart on failure
+- ✅ Persistent data volumes
+- ✅ Production-ready
+
+📖 **See [DOCKER_GUIDE.md](DOCKER_GUIDE.md) for detailed Docker documentation**
+
+**Management:**
+```bash
+./docker-start.sh          # Start container
+./docker-stop.sh           # Stop container
+docker-compose logs -f     # View logs
+docker-compose ps          # Check status
+docker-compose restart     # Restart container
 ```
 
 ### Option 2: GitHub Actions
@@ -85,17 +111,28 @@ jobs:
 
 ### Option 3: Cloud Functions (AWS Lambda, Google Cloud Functions, etc.)
 
-Package the code and deploy as a scheduled function. Use `run_daily.py` as the entry point.
+Package the code and deploy as a scheduled function. Use `run_project.py --run-once` as the entry point.
 
-### Option 4: Continuous Scheduler (Python)
+### Option 4: Continuous Scheduler (Python - Local Development)
 
-Run the built-in scheduler:
+Run the built-in scheduler directly (for local development):
 
 ```bash
+python3 run_project.py
+# or
 python3 -m src.publix_scraper.scheduler
 ```
 
-This runs continuously and executes daily at the time specified in `.env` (default: 2:00 AM UTC).
+This runs continuously and executes at scheduled times. **Note**: For production, Docker (Option 1) is recommended.
+
+### Option 5: Cron Job (Linux/macOS - Alternative)
+
+For simple server deployments without Docker:
+
+```bash
+# Add to crontab (crontab -e)
+0 2 * * * cd /path/to/grocery-price-scraper && /usr/bin/python3 run_project.py --run-once >> logs/cron.log 2>&1
+```
 
 ## Output
 
@@ -126,8 +163,22 @@ If the job fails:
 
 ## Monitoring
 
-Check logs:
+### Docker Deployment
 ```bash
+# View container logs
+docker-compose logs -f scraper
+
+# View last 100 lines
+docker-compose logs --tail=100 scraper
+
+# Check container status
+docker-compose ps
+```
+
+### Local/Other Deployments
+```bash
+# Application logs
+tail -f logs/project_orchestrator.log
 tail -f logs/daily_run.log
 tail -f logs/scheduler.log
 tail -f logs/monthly_dataset.log
