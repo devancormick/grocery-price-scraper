@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Main Project Orchestrator
+Main Project Orchestrator - Continuous Scheduler
 
-This script orchestrates the entire project workflow:
-1. Updates stores.json via StoreLocator
+This script orchestrates the entire project workflow and runs continuously:
+1. Immediately updates stores.json via StoreLocator
 2. Runs weekly scraper
 3. Generates CSV, uploads to Google Sheets, sends email
 4. If last week of month, prepares monthly report
-5. Schedules next operation using cron
+5. Schedules next run for next week (Sunday at 10:00 AM EST)
+6. Keeps running and repeats the process when scheduled time arrives
 
 Usage:
     python3 run_project.py
@@ -16,6 +17,7 @@ import sys
 import argparse
 import subprocess
 import json
+import time
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -228,123 +230,94 @@ def generate_monthly_report(month_year: str):
         return None
 
 
-def calculate_next_run_time():
+def calculate_next_sunday_10am_est():
     """
-    Calculate next run time (next week, same day, 10:00 AM EST)
+    Calculate next Sunday at 10:00 AM EST
     
     Returns:
-        datetime: Next run time
+        datetime: Next Sunday at 10:00 AM EST
     """
-    from datetime import time
     import pytz
     
     # Get current time in EST
     est = pytz.timezone('US/Eastern')
     now_est = datetime.now(est)
     
-    # Next week, same day of week, at 10:00 AM EST
-    next_run = now_est + timedelta(weeks=1)
-    next_run = next_run.replace(hour=10, minute=0, second=0, microsecond=0)
+    # Find next Sunday
+    days_until_sunday = (6 - now_est.weekday()) % 7
+    if days_until_sunday == 0:
+        # If today is Sunday, check if we've passed 10 AM
+        if now_est.hour < 10 or (now_est.hour == 10 and now_est.minute == 0):
+            # Today is Sunday but before 10 AM, use today
+            next_sunday = now_est.replace(hour=10, minute=0, second=0, microsecond=0)
+        else:
+            # Today is Sunday but after 10 AM, use next Sunday
+            next_sunday = now_est + timedelta(days=7)
+            next_sunday = next_sunday.replace(hour=10, minute=0, second=0, microsecond=0)
+    else:
+        # Not Sunday yet, calculate next Sunday
+        next_sunday = now_est + timedelta(days=days_until_sunday)
+        next_sunday = next_sunday.replace(hour=10, minute=0, second=0, microsecond=0)
     
-    return next_run
+    return next_sunday
 
 
-def schedule_next_run():
+def run_weekly_workflow(store_limit=None, week=None):
     """
-    Schedule next run using cron (Linux/Mac) or provide instructions for Windows
+    Run the complete weekly workflow:
+    1. Update stores.json
+    2. Run weekly scraper
+    3. Generate monthly report if last week of month
+    
+    Args:
+        store_limit: Limit number of stores (for testing)
+        week: Week number override
     
     Returns:
-        bool: True if scheduled successfully
+        bool: True if successful
     """
-    import platform
-    
-    logger.info("\n" + "=" * 80)
-    logger.info("Step 4: Scheduling Next Run")
-    logger.info("=" * 80)
-    
     try:
-        next_run = calculate_next_run_time()
-        
-        # Check if running on Windows
-        if platform.system() == "Windows":
-            logger.warning("[WARNING] Cron scheduling is not available on Windows")
-            logger.warning("   Please use Windows Task Scheduler to schedule the next run")
-            logger.info(f"   Next run should be: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-            logger.info(f"   Command to run: {sys.executable} {Path(__file__).absolute()}")
+        # Step 1: Update stores.json
+        if not update_stores_json():
+            logger.error("[ERROR] Store update failed.")
             return False
         
-        # Linux/Mac: Use cron
-        # Convert to cron format
-        # Cron format: minute hour day month weekday
-        cron_minute = next_run.minute
-        cron_hour = next_run.hour
-        cron_day = next_run.day
-        cron_month = next_run.month
-        cron_weekday = next_run.weekday()  # 0=Monday, 6=Sunday
-        
-        # Build cron command
-        cron_command = f"{cron_minute} {cron_hour} {cron_day} {cron_month} {cron_weekday}"
-        
-        # Get absolute path to this script
-        script_path = Path(__file__).absolute()
-        python_path = sys.executable
-        
-        # Full command to run
-        full_command = f"{python_path} {script_path}"
-        
-        # Create cron entry
-        cron_entry = f"{cron_command} {full_command} >> {project_root}/logs/cron.log 2>&1\n"
-        
-        # Get current crontab
-        try:
-            result = subprocess.run(
-                ['crontab', '-l'],
-                capture_output=True,
-                text=True,
-                check=False
-            )
-            current_crontab = result.stdout
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            current_crontab = ""
-        
-        # Remove existing entry for this script if any
-        lines = current_crontab.split('\n')
-        filtered_lines = [
-            line for line in lines
-            if str(script_path) not in line and line.strip()
-        ]
-        
-        # Add new entry
-        filtered_lines.append(cron_entry.strip())
-        
-        # Write updated crontab
-        new_crontab = '\n'.join(filtered_lines) + '\n'
-        
-        process = subprocess.Popen(
-            ['crontab', '-'],
-            stdin=subprocess.PIPE,
-            text=True
+        # Step 2: Run weekly scraper
+        dataset_file = run_weekly_scraper(
+            store_limit=store_limit,
+            week=week
         )
-        process.communicate(input=new_crontab)
-        
-        if process.returncode == 0:
-            logger.info(f"[SUCCESS] Next run scheduled successfully")
-            logger.info(f"   Next run: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-            logger.info(f"   Cron entry: {cron_entry.strip()}")
-            return True
-        else:
-            logger.error("[ERROR] Failed to schedule next run")
+        if not dataset_file:
+            logger.error("[ERROR] Weekly scraper failed.")
             return False
-            
+        
+        # Step 3: Generate monthly report if last week of month
+        current_date = datetime.now().date()
+        month_year = get_month_year_string(current_date)
+        is_last_week = is_last_week_of_month(current_date)
+        
+        if is_last_week:
+            logger.info(f"\n[INFO] Last week of month detected. Generating monthly report...")
+            monthly_report = generate_monthly_report(month_year)
+            if monthly_report:
+                logger.info(f"[SUCCESS] Monthly report generated: {monthly_report}")
+            else:
+                logger.warning("[WARNING] Monthly report generation failed, but continuing...")
+        
+        return True
+        
     except Exception as e:
-        logger.error(f"[ERROR] Error scheduling next run: {e}", exc_info=True)
+        logger.error(f"[ERROR] Error in weekly workflow: {e}", exc_info=True)
         return False
 
 
 def main():
-    """Main orchestrator function"""
+    """
+    Main orchestrator function - Runs continuously
+    Executes workflow immediately, then schedules next run for Sunday at 10:00 AM EST
+    """
     parser = argparse.ArgumentParser(
-        description="Publix Price Scraper - Project Orchestrator"
+        description="Publix Price Scraper - Continuous Project Orchestrator"
     )
     parser.add_argument(
         "--store-limit",
@@ -360,63 +333,95 @@ def main():
         help="Week number (1-4). If not specified, uses current week of month"
     )
     parser.add_argument(
-        "--no-schedule",
+        "--run-once",
         action="store_true",
-        help="Skip scheduling next run (useful for testing)"
+        help="Run once and exit (no continuous scheduling)"
     )
     
     args = parser.parse_args()
     
     logger.info("=" * 80)
-    logger.info("Publix Price Scraper - Project Orchestrator")
+    logger.info("Publix Price Scraper - Continuous Project Orchestrator")
     logger.info("=" * 80)
     logger.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     if args.store_limit:
         logger.info(f"Store limit: {args.store_limit} (testing mode)")
     if args.week:
         logger.info(f"Week override: {args.week}")
-    if args.no_schedule:
-        logger.info("Scheduling disabled (--no-schedule)")
     logger.info("=" * 80)
     
-    # Step 1: Update stores.json
-    if not update_stores_json():
-        logger.error("[ERROR] Store update failed. Aborting.")
-        sys.exit(1)
+    # Run workflow immediately
+    logger.info("\n[INFO] Running initial workflow execution...")
+    run_weekly_workflow(store_limit=args.store_limit, week=args.week)
     
-    # Step 2: Run weekly scraper
-    dataset_file = run_weekly_scraper(
-        store_limit=args.store_limit,
-        week=args.week
-    )
-    if not dataset_file:
-        logger.error("[ERROR] Weekly scraper failed. Aborting.")
-        sys.exit(1)
+    # If run-once flag is set, exit after first run
+    if args.run_once:
+        logger.info("\n[INFO] Run-once mode: Exiting after initial run")
+        logger.info("=" * 80)
+        return
     
-    # Step 3: Generate monthly report if last week of month
-    current_date = datetime.now().date()
-    month_year = get_month_year_string(current_date)
-    is_last_week = is_last_week_of_month(current_date)
-    
-    if is_last_week:
-        logger.info(f"\n[WARNING] Last week of month detected. Generating monthly report...")
-        monthly_report = generate_monthly_report(month_year)
-        if monthly_report:
-            logger.info(f"[SUCCESS] Monthly report generated: {monthly_report}")
-        else:
-            logger.warning("[WARNING] Monthly report generation failed, but continuing...")
-    
-    # Step 4: Schedule next run (unless disabled)
-    if not args.no_schedule:
-        schedule_next_run()
-    else:
-        logger.info("\n[INFO] Scheduling skipped (--no-schedule flag)")
+    # Calculate next Sunday at 10:00 AM EST
+    import pytz
+    est = pytz.timezone('US/Eastern')
+    next_sunday = calculate_next_sunday_10am_est()
     
     logger.info("\n" + "=" * 80)
-    logger.info("[SUCCESS] Project Orchestration Complete!")
+    logger.info("Setting up continuous scheduler...")
     logger.info("=" * 80)
-    logger.info(f"Completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Next scheduled run: {next_sunday.strftime('%A, %B %d, %Y at %I:%M %p %Z')}")
+    logger.info("The process will continue running and execute the workflow at the scheduled time.")
+    logger.info("Press Ctrl+C to stop")
     logger.info("=" * 80)
+    
+    # Keep scheduler running indefinitely
+    # Check every minute if it's time to run (Sunday at 10:00 AM EST)
+    try:
+        last_run_week = None
+        while True:
+            try:
+                # Get current time in EST
+                now_est = datetime.now(est)
+                current_week = now_est.isocalendar()[1]  # ISO week number
+                
+                # Check if it's Sunday and 10:00 AM EST (within 5 minute window to account for timing)
+                if (now_est.weekday() == 6 and  # Sunday
+                    now_est.hour == 10 and 
+                    0 <= now_est.minute < 5 and  # Within first 5 minutes of 10 AM
+                    (last_run_week is None or current_week != last_run_week)):
+                    # Time to run!
+                    logger.info("\n" + "=" * 80)
+                    logger.info(f"[INFO] Scheduled time reached: {now_est.strftime('%A, %B %d, %Y at %I:%M %p %Z')}")
+                    logger.info("=" * 80)
+                    
+                    # Run the workflow
+                    try:
+                        if run_weekly_workflow(store_limit=args.store_limit, week=None):
+                            last_run_week = current_week
+                            logger.info("\n[SUCCESS] Weekly workflow completed successfully")
+                            
+                            # Calculate next Sunday
+                            next_sunday = calculate_next_sunday_10am_est()
+                            logger.info(f"Next scheduled run: {next_sunday.strftime('%A, %B %d, %Y at %I:%M %p %Z')}")
+                        else:
+                            logger.error("[ERROR] Weekly workflow failed, will retry next Sunday")
+                    except Exception as workflow_error:
+                        # Log error but don't stop scheduler
+                        logger.error(f"[ERROR] Workflow execution error: {workflow_error}", exc_info=True)
+                        logger.error("[ERROR] Will retry next Sunday")
+                    
+                    logger.info("=" * 80)
+                    logger.info("Scheduler continues running...")
+                    logger.info("=" * 80)
+                
+            except Exception as e:
+                # Prevent unexpected errors from killing the scheduler
+                logger.error(f"[ERROR] Error in scheduler loop: {e}", exc_info=True)
+            
+            time.sleep(60)  # Check every minute
+            
+    except KeyboardInterrupt:
+        logger.info("\n[INFO] Scheduler stopped by user")
+        sys.exit(0)
 
 
 if __name__ == "__main__":
