@@ -31,7 +31,8 @@ class EmailHandler:
         self.email_to = EMAIL_TO
     
     def send_weekly_report(self, week: int, product_count: int, store_count: int,
-                          sheet_url: str, csv_path: Optional[str] = None) -> bool:
+                          sheet_url: str, csv_path: Optional[str] = None,
+                          new_count: int = None, month_year: str = None) -> bool:
         """
         Send weekly report email with Google Sheet link and CSV attachment
         
@@ -41,6 +42,8 @@ class EmailHandler:
             store_count: Number of stores scraped
             sheet_url: URL to the Google Sheet
             csv_path: Path to CSV file to attach
+            new_count: Number of new products (optional)
+            month_year: Month-year string like "2024-01" (optional)
         
         Returns:
             True if email sent successfully
@@ -54,26 +57,31 @@ class EmailHandler:
             msg = MIMEMultipart()
             msg['From'] = self.email_from
             msg['To'] = ', '.join(self.email_to)
-            msg['Subject'] = f"Publix Price Scraper - Week {week} Report ({product_count} products)"
+            
+            subject = f"Publix Price Scraper - Week {week} Report"
+            if month_year:
+                subject += f" ({month_year})"
+            subject += f" - {product_count} products"
+            msg['Subject'] = subject
             
             # Create email body
             body = f"""
-Publix Grocery Store Price Scraping Report
+Publix Grocery Store Price Scraping - Weekly Report
 
 Week: {week}
-Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-Summary:
-- Products scraped: {product_count}
-- Stores covered: {store_count}
-- Week: {week}
-
-✅ Data has been successfully collected and uploaded to Google Sheets.
-
-Google Sheet Link:
-{sheet_url}
-
 """
+            if month_year:
+                body += f"Month: {month_year}\n"
+            body += f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            body += f"Summary:\n"
+            body += f"- Products scraped: {product_count}\n"
+            if new_count is not None:
+                body += f"- New products: {new_count}\n"
+                body += f"- Duplicate products: {product_count - new_count}\n"
+            body += f"- Stores covered: {store_count}\n"
+            body += f"- Week: {week}\n\n"
+            body += f"✅ Data has been successfully collected and uploaded to Google Sheets.\n\n"
+            body += f"📊 Google Sheet Link:\n{sheet_url}\n\n"
             
             if csv_path:
                 body += f"""
