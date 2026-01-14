@@ -38,21 +38,46 @@ setup_logging(log_level="INFO", log_file=project_root / "logs/project_orchestrat
 logger = get_logger(__name__)
 
 
-def update_stores_json():
+def is_stores_json_recent(max_age_hours=24):
     """
-    Always fetch ALL stores from Publix API and update stores.json
-    This ensures we have the latest store data before scraping
+    Check if stores.json was updated recently (within max_age_hours)
+    
+    Args:
+        max_age_hours: Maximum age in hours to consider as "recent" (default: 24 hours = 1 day)
+    
+    Returns:
+        bool: True if stores.json exists and was updated within max_age_hours, False otherwise
+    """
+    from src.publix_scraper.core.config import DATA_DIR
+    stores_file = DATA_DIR / "stores.json"
+    
+    if not stores_file.exists():
+        return False
+    
+    try:
+        # Get file modification time
+        file_mtime = stores_file.stat().st_mtime
+        file_age_seconds = time.time() - file_mtime
+        file_age_hours = file_age_seconds / 3600
+        
+        return file_age_hours < max_age_hours
+    except Exception:
+        return False
+
+
+def update_stores_json(force_update=False):
+    """
+    Update stores.json from Publix API
+    If stores.json was updated less than 1 day ago, skip fetching unless force_update is True
+    
+    Args:
+        force_update: If True, always fetch from API regardless of file age
     
     Returns:
         bool: True if update successful, False otherwise
     """
     logger.info("=" * 80)
-    logger.info("Step 1: Fetching ALL stores from Publix API")
-    logger.info("=" * 80)
-    logger.info("This step will:")
-    logger.info("  - Always fetch ALL stores from Publix API")
-    logger.info("  - Update stores.json with the latest store data")
-    logger.info("  - Validate stores before proceeding to product scraping")
+    logger.info("Step 1: Updating stores.json")
     logger.info("=" * 80)
     
     try:
@@ -63,15 +88,36 @@ def update_stores_json():
         stores_file = DATA_DIR / "stores.json"
         stores_exist = stores_file.exists()
         
-        if stores_exist:
-            # Check if file has stores
-            all_stores_before = store_locator.get_all_target_stores()
-            logger.info(f"Current stores.json found: {len(all_stores_before)} stores")
-        else:
-            logger.info("stores.json not found.")
+        # Check if stores.json is recent (less than 1 day old)
+        if stores_exist and not force_update:
+            if is_stores_json_recent(max_age_hours=24):
+                # File is recent, use existing stores
+                logger.info("stores.json was updated less than 1 day ago.")
+                logger.info("Using existing stores.json (skip fetching from API).")
+                logger.info("Use --force-update-stores to force fetching from API.")
+                
+                # Validate existing stores
+                all_stores = store_locator.get_all_target_stores()
+                
+                if len(all_stores) == 0:
+                    logger.warning("[WARNING] stores.json exists but is empty. Will fetch from API...")
+                    force_update = True  # Force update if file is empty
+                else:
+                    logger.info(f"[SUCCESS] Using existing stores.json")
+                    logger.info(f"   Total stores: {len(all_stores)}")
+                    logger.info(f"   FL stores: {len([s for s in all_stores if s.state == 'FL'])}")
+                    logger.info(f"   GA stores: {len([s for s in all_stores if s.state == 'GA'])}")
+                    logger.info("=" * 80)
+                    logger.info("[SUCCESS] Stores are ready. Proceeding to product scraping...")
+                    logger.info("=" * 80)
+                    return True
         
-        # Always fetch stores from API to ensure we have the latest data
-        logger.info("Fetching ALL stores from Publix API to update stores.json...")
+        # Fetch stores from API (either file doesn't exist, is old, or force_update is True)
+        if force_update:
+            logger.info("Force update mode: Fetching ALL stores from Publix API...")
+        else:
+            logger.info("Fetching ALL stores from Publix API to update stores.json...")
+        
         stores_dict = store_locator._fetch_stores_from_api()
         
         if len(stores_dict.get("FL", [])) == 0 and len(stores_dict.get("GA", [])) == 0:
@@ -94,7 +140,7 @@ def update_stores_json():
             logger.error("[ERROR] No stores found after update. Cannot proceed with scraping.")
             return False
         
-        logger.info(f"[SUCCESS] Successfully updated/validated stores.json")
+        logger.info(f"[SUCCESS] Successfully fetched and updated stores.json")
         logger.info(f"   Total stores: {len(all_stores)}")
         logger.info(f"   FL stores: {len([s for s in all_stores if s.state == 'FL'])}")
         logger.info(f"   GA stores: {len([s for s in all_stores if s.state == 'GA'])}")
@@ -262,7 +308,7 @@ def calculate_next_sunday_10am_est():
     return next_sunday
 
 
-def run_weekly_workflow(store_limit=None, week=None):
+def run_weekly_workflow(store_limit=None, week=None, force_update_stores=False):
     """
     Run the complete weekly workflow:
     1. Update stores.json
@@ -272,13 +318,14 @@ def run_weekly_workflow(store_limit=None, week=None):
     Args:
         store_limit: Limit number of stores (for testing)
         week: Week number override
+        force_update_stores: Force fetching stores from API even if recent
     
     Returns:
         bool: True if successful
     """
     try:
         # Step 1: Update stores.json
-        if not update_stores_json():
+        if not update_stores_json(force_update=force_update_stores):
             logger.error("[ERROR] Store update failed.")
             return False
         
@@ -342,6 +389,11 @@ def main():
         action="store_true",
         help="Test mode: schedule runs every 200 seconds instead of weekly"
     )
+    parser.add_argument(
+        "--force-update-stores",
+        action="store_true",
+        help="Force fetching stores from API even if stores.json was updated less than 1 day ago"
+    )
     
     args = parser.parse_args()
     
@@ -355,11 +407,13 @@ def main():
         logger.info(f"Week override: {args.week}")
     if args.test_mode:
         logger.info("Test mode: Scheduling runs every 200 seconds")
+    if args.force_update_stores:
+        logger.info("Force update stores: Will fetch stores from API even if recent")
     logger.info("=" * 80)
     
     # Run workflow immediately
     logger.info("\n[INFO] Running initial workflow execution...")
-    run_weekly_workflow(store_limit=args.store_limit, week=args.week)
+    run_weekly_workflow(store_limit=args.store_limit, week=args.week, force_update_stores=args.force_update_stores)
     
     # If run-once flag is set, exit after first run
     if args.run_once:
@@ -394,7 +448,7 @@ def main():
                         
                         # Run the workflow
                         try:
-                            if run_weekly_workflow(store_limit=args.store_limit, week=None):
+                            if run_weekly_workflow(store_limit=args.store_limit, week=None, force_update_stores=args.force_update_stores):
                                 last_run_time = current_time
                                 logger.info("\n[SUCCESS] Workflow completed successfully")
                                 logger.info(f"Next run in {TEST_INTERVAL} seconds")
@@ -456,7 +510,7 @@ def main():
                     
                     # Run the workflow
                     try:
-                        if run_weekly_workflow(store_limit=args.store_limit, week=None):
+                        if run_weekly_workflow(store_limit=args.store_limit, week=None, force_update_stores=args.force_update_stores):
                             last_run_week = current_week
                             logger.info("\n[SUCCESS] Weekly workflow completed successfully")
                             

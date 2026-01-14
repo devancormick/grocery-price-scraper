@@ -62,6 +62,12 @@ python run_project.py --test-mode
 ```
 Runs the workflow every 200 seconds instead of weekly. Useful for testing the scheduler functionality.
 
+### Force Update Stores
+```bash
+python run_project.py --force-update-stores
+```
+Forces fetching stores from API even if stores.json was updated less than 1 day ago. By default, the system uses cached stores if they're less than 24 hours old.
+
 ## Process Management
 
 ### Starting the Process

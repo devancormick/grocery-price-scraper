@@ -21,16 +21,47 @@ setup_logging(
 logger = get_logger(__name__)
 
 
-def update_stores():
+def is_stores_json_recent(max_age_hours=24):
     """
-    Always fetch ALL stores from Publix API and update stores.json before scraping
-    This ensures we have the latest store data before each scraping job
+    Check if stores.json was updated recently (within max_age_hours)
+    
+    Args:
+        max_age_hours: Maximum age in hours to consider as "recent" (default: 24 hours = 1 day)
+    
+    Returns:
+        bool: True if stores.json exists and was updated within max_age_hours, False otherwise
+    """
+    from .core.config import DATA_DIR
+    stores_file = DATA_DIR / "stores.json"
+    
+    if not stores_file.exists():
+        return False
+    
+    try:
+        import time
+        # Get file modification time
+        file_mtime = stores_file.stat().st_mtime
+        file_age_seconds = time.time() - file_mtime
+        file_age_hours = file_age_seconds / 3600
+        
+        return file_age_hours < max_age_hours
+    except Exception:
+        return False
+
+
+def update_stores(force_update=False):
+    """
+    Update stores.json from Publix API before scraping
+    If stores.json was updated less than 1 day ago, skip fetching unless force_update is True
+    
+    Args:
+        force_update: If True, always fetch from API regardless of file age
     
     Returns:
         bool: True if update successful, False otherwise
     """
     logger.info("=" * 80)
-    logger.info("Fetching ALL stores from Publix API")
+    logger.info("Updating stores.json")
     logger.info("=" * 80)
     
     try:
@@ -41,14 +72,32 @@ def update_stores():
         stores_file = DATA_DIR / "stores.json"
         stores_exist = stores_file.exists()
         
-        if stores_exist:
-            all_stores_before = store_locator.get_all_target_stores()
-            logger.info(f"Current stores.json found: {len(all_stores_before)} stores")
-        else:
-            logger.info("stores.json not found.")
+        # Check if stores.json is recent (less than 1 day old)
+        if stores_exist and not force_update:
+            if is_stores_json_recent(max_age_hours=24):
+                # File is recent, use existing stores
+                logger.info("stores.json was updated less than 1 day ago.")
+                logger.info("Using existing stores.json (skip fetching from API).")
+                
+                # Validate existing stores
+                all_stores = store_locator.get_all_target_stores()
+                
+                if len(all_stores) == 0:
+                    logger.warning("[WARNING] stores.json exists but is empty. Will fetch from API...")
+                    force_update = True  # Force update if file is empty
+                else:
+                    logger.info(f"[SUCCESS] Using existing stores.json")
+                    logger.info(f"   Total stores: {len(all_stores)}")
+                    logger.info(f"   FL stores: {len([s for s in all_stores if s.state == 'FL'])}")
+                    logger.info(f"   GA stores: {len([s for s in all_stores if s.state == 'GA'])}")
+                    return True
         
-        # Always fetch stores from API to ensure we have the latest data
-        logger.info("Fetching ALL stores from Publix API to update stores.json...")
+        # Fetch stores from API (either file doesn't exist, is old, or force_update is True)
+        if force_update:
+            logger.info("Force update mode: Fetching ALL stores from Publix API...")
+        else:
+            logger.info("Fetching ALL stores from Publix API to update stores.json...")
+        
         stores_dict = store_locator._fetch_stores_from_api()
         
         if len(stores_dict.get("FL", [])) == 0 and len(stores_dict.get("GA", [])) == 0:
