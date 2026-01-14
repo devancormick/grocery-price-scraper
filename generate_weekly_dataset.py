@@ -233,6 +233,10 @@ def generate_weekly_dataset(
     weekly_storage.save_products(validated_final, append=False)
     
     # Upload to Google Sheets (weekly tab in monthly sheet)
+    sheet_url = None
+    new_count = summary.products_new
+    total_count = len(validated_final)
+    
     if validated_final and google_sheets:
         try:
             logger.info("\n" + "=" * 80)
@@ -246,32 +250,6 @@ def generate_weekly_dataset(
             logger.info(f"   Monthly Sheet: {month_year}")
             logger.info(f"   Week Tab: Week {week}")
             logger.info(f"   New records: {new_count}, Total records: {total_count}")
-            
-            # Send weekly email report
-            if email_handler:
-                try:
-                    email_sent = email_handler.send_weekly_report(
-                        week=week,
-                        product_count=len(validated_final),
-                        new_count=new_count,
-                        store_count=summary.stores_processed,
-                        sheet_url=sheet_url,
-                        csv_path=str(weekly_output),
-                        month_year=month_year
-                    )
-                    if email_sent:
-                        summary.email_sent = True
-                        logger.info("✅ Weekly report email sent")
-                    else:
-                        logger.warning("⚠️  Email sending failed")
-                except Exception as e:
-                    logger.error(f"Error sending email: {e}", exc_info=True)
-                    summary.errors.append({
-                        'type': 'email_error',
-                        'message': str(e)
-                    })
-            else:
-                logger.warning("Email handler not available")
                 
         except Exception as e:
             logger.error(f"Error uploading to Google Sheets: {e}", exc_info=True)
@@ -279,8 +257,50 @@ def generate_weekly_dataset(
                 'type': 'google_sheets_error',
                 'message': str(e)
             })
+            logger.warning("⚠️  Google Sheets upload failed, but continuing with email...")
     else:
-        logger.warning("Google Sheets handler not available or no products to upload")
+        if not google_sheets:
+            logger.warning("Google Sheets handler not available")
+        if not validated_final:
+            logger.warning("No products to upload")
+    
+    # Send weekly email report (even if Google Sheets failed)
+    if validated_final and email_handler:
+        try:
+            logger.info("\n" + "=" * 80)
+            logger.info("Sending Weekly Email Report...")
+            
+            # If no sheet URL, use a placeholder or the base sheet URL
+            if not sheet_url and google_sheets:
+                try:
+                    sheet_url = google_sheets.get_sheet_url()
+                except:
+                    sheet_url = "Google Sheets upload failed - see CSV attachment"
+            
+            email_sent = email_handler.send_weekly_report(
+                week=week,
+                product_count=len(validated_final),
+                new_count=new_count,
+                store_count=summary.stores_processed,
+                sheet_url=sheet_url or "N/A - Google Sheets unavailable",
+                csv_path=str(weekly_output),
+                month_year=month_year
+            )
+            if email_sent:
+                summary.email_sent = True
+                logger.info("✅ Weekly report email sent")
+            else:
+                logger.warning("⚠️  Email sending failed")
+        except Exception as e:
+            logger.error(f"Error sending email: {e}", exc_info=True)
+            summary.errors.append({
+                'type': 'email_error',
+                'message': str(e)
+            })
+    elif not email_handler:
+        logger.warning("Email handler not available - skipping email")
+    elif not validated_final:
+        logger.warning("No products to report - skipping email")
     
     # Generate summary report
     summary.finish()
