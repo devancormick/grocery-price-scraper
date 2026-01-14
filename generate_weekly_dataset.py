@@ -155,6 +155,7 @@ def generate_weekly_dataset(
     
     # Collect products for this week
     all_weekly_products = []
+    all_validated_products = []  # Store all validated products (not just new ones)
     
     # Chunk configuration
     CSV_UPDATE_INTERVAL = 20  # Update CSV every 20 stores
@@ -166,6 +167,7 @@ def generate_weekly_dataset(
     start_time = time.time()
     store_times = []  # Track time per store for ETA calculation
     last_email_store_count = 0
+    first_sheets_update = True  # Track if this is the first Google Sheets update
     
     logger.info("\n" + "=" * 80)
     logger.info(f"Starting Weekly Data Collection - Week {week}")
@@ -186,20 +188,24 @@ def generate_weekly_dataset(
             try:
                 worksheet = monthly_sheet.worksheet(tab_name)
                 logger.info(f"Using existing Google Sheets tab: {tab_name}")
+                # Clear existing data for fresh start
+                worksheet.clear()
+                logger.info(f"Cleared existing data in tab: {tab_name}")
             except:
                 worksheet = monthly_sheet.add_worksheet(
                     title=tab_name,
                     rows=1000,
                     cols=10
                 )
-                # Write header
-                header = google_sheets.format_products_for_sheet([])[0]
-                worksheet.update('A1', [header])
-                worksheet.format('A1:J1', {
-                    'textFormat': {'bold': True},
-                    'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
-                })
                 logger.info(f"Created new Google Sheets tab: {tab_name}")
+            
+            # Write header (always write header for fresh start)
+            header = google_sheets.format_products_for_sheet([])[0]
+            worksheet.update('A1', [header])
+            worksheet.format('A1:J1', {
+                'textFormat': {'bold': True},
+                'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
+            })
             sheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit#gid={worksheet.id}"
         except Exception as e:
             logger.warning(f"Could not initialize Google Sheets tab: {e}")
@@ -249,9 +255,17 @@ def generate_weekly_dataset(
                                 if google_sheets and worksheet:
                                     try:
                                         rows = google_sheets.format_products_for_sheet(new_chunk)
-                                        rows = rows[1:]  # Remove header
-                                        worksheet.append_rows(rows)
-                                        logger.info(f"  [SHEETS UPDATE] Updated Google Sheets with {len(new_chunk)} products")
+                                        
+                                        if first_sheets_update:
+                                            # First update: overwrite with header + data
+                                            worksheet.update('A1', rows)
+                                            logger.info(f"  [SHEETS UPDATE] First update: Wrote {len(new_chunk)} products to Google Sheets (overwrite)")
+                                            first_sheets_update = False
+                                        else:
+                                            # Subsequent updates: append data only (no header)
+                                            rows = rows[1:]  # Remove header
+                                            worksheet.append_rows(rows)
+                                            logger.info(f"  [SHEETS UPDATE] Updated Google Sheets with {len(new_chunk)} products (append)")
                                     except Exception as e:
                                         logger.warning(f"  [WARNING] Could not update Google Sheets: {e}")
                                 
@@ -327,9 +341,17 @@ def generate_weekly_dataset(
                     if google_sheets and worksheet:
                         try:
                             rows = google_sheets.format_products_for_sheet(new_chunk)
-                            rows = rows[1:]
-                            worksheet.append_rows(rows)
-                            logger.info(f"  [SHEETS UPDATE] Final Google Sheets update with {len(new_chunk)} products")
+                            
+                            if first_sheets_update:
+                                # First update: overwrite with header + data
+                                worksheet.update('A1', rows)
+                                logger.info(f"  [SHEETS UPDATE] Final update (first): Wrote {len(new_chunk)} products to Google Sheets (overwrite)")
+                                first_sheets_update = False
+                            else:
+                                # Subsequent update: append data only (no header)
+                                rows = rows[1:]  # Remove header
+                                worksheet.append_rows(rows)
+                                logger.info(f"  [SHEETS UPDATE] Final Google Sheets update with {len(new_chunk)} products (append)")
                         except Exception as e:
                             logger.warning(f"  [WARNING] Could not update Google Sheets: {e}")
         
@@ -343,16 +365,16 @@ def generate_weekly_dataset(
             if errors:
                 logger.warning(f"  [WARNING]  {len(errors)} products failed validation")
             
-            # Incremental filtering (only new products)
+            # Store all validated products for final CSV (before filtering)
+            all_validated_products = validated
+            
+            # Incremental filtering (only new products) - for tracking purposes
             new_products = incremental.filter_new_products(validated)
             
             # Deduplication
             new_products, duplicates = deduplicator.filter_new_records(new_products)
             summary.products_new += len(new_products)
             summary.products_duplicate += len(duplicates)
-            
-            # Add to weekly collection
-            all_weekly_products = new_products
             
             # Save to temporary storage for incremental tracking
             if new_products:
@@ -364,16 +386,21 @@ def generate_weekly_dataset(
     logger.info("Generating Final Weekly Dataset")
     logger.info("=" * 80)
     
-    if not all_weekly_products:
+    # Use all validated products (not just new ones) for final CSV
+    if not all_validated_products and not all_weekly_products:
         logger.warning("No products collected. Please check the scraper configuration.")
         return None
     
-    # Validate all products one final time
-    logger.info(f"Final validation of {len(all_weekly_products)} products...")
-    validated_final, final_errors = validator.validate_and_clean_products(all_weekly_products)
-    
-    if final_errors:
-        logger.warning(f"  [WARNING]  {len(final_errors)} products failed final validation")
+    # Use validated products if available, otherwise validate all weekly products
+    if all_validated_products:
+        validated_final = all_validated_products
+        logger.info(f"Using {len(validated_final)} validated products for final dataset")
+    else:
+        # Fallback: validate all weekly products
+        logger.info(f"Final validation of {len(all_weekly_products)} products...")
+        validated_final, final_errors = validator.validate_and_clean_products(all_weekly_products)
+        if final_errors:
+            logger.warning(f"  [WARNING]  {len(final_errors)} products failed final validation")
     
     # Save final weekly dataset (overwrite with complete dataset)
     logger.info(f"Saving final weekly dataset to {weekly_output}...")
