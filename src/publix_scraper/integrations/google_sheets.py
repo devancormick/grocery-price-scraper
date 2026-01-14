@@ -1,0 +1,243 @@
+"""
+Google Sheets integration for Publix price data
+Supports daily tabs and weekly tabs based on project requirements
+"""
+from datetime import datetime
+from typing import List, Tuple
+import gspread
+from google.oauth2.service_account import Credentials
+from ..core.config import GOOGLE_SHEETS_CREDENTIALS_PATH, GOOGLE_SHEET_ID, DATE_FORMAT
+from ..core.models import Product
+from ..utils.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+
+class GoogleSheetsHandler:
+    """Handles Google Sheets operations for price data"""
+    
+    def __init__(self):
+        """Initialize Google Sheets client"""
+        try:
+            # Authenticate using service account
+            scope = [
+                'https://spreadsheets.google.com/feeds',
+                'https://www.googleapis.com/auth/drive'
+            ]
+            credentials = Credentials.from_service_account_file(
+                GOOGLE_SHEETS_CREDENTIALS_PATH,
+                scopes=scope
+            )
+            self.client = gspread.authorize(credentials)
+            self.sheet_id = GOOGLE_SHEET_ID
+            self.sheet = None
+            
+            if self.sheet_id:
+                self.sheet = self.client.open_by_key(self.sheet_id)
+                logger.info(f"Connected to Google Sheet: {self.sheet.title}")
+            else:
+                logger.warning("No Google Sheet ID configured")
+                
+        except FileNotFoundError:
+            logger.error(f"Service account credentials not found at: {GOOGLE_SHEETS_CREDENTIALS_PATH}")
+            raise
+        except Exception as e:
+            logger.error(f"Error initializing Google Sheets client: {str(e)}")
+            raise
+    
+    def format_products_for_sheet(self, products: List[Product]) -> List[List]:
+        """
+        Format products for Google Sheets output
+        
+        Args:
+            products: List of Product objects
+            
+        Returns:
+            List of rows (each row is a list of values)
+        """
+        rows = []
+        # Header row
+        rows.append([
+            "Product Name",
+            "Product Description",
+            "Product Identifier",
+            "Date",
+            "Price",
+            "Ounces",
+            "Price Per Ounce",
+            "Price Promotion",
+            "Week",
+            "Store"
+        ])
+        
+        # Data rows
+        for product in products:
+            rows.append([
+                product.product_name,
+                product.product_description,
+                product.product_identifier,
+                product.date.isoformat(),
+                product.price,
+                product.ounces,
+                product.price_per_ounce,
+                product.price_promotion or "",
+                product.week,
+                product.store
+            ])
+        
+        return rows
+    
+    def create_weekly_tab(self, week: int, products: List[Product]) -> tuple:
+        """
+        Create or update a tab for the given week and add products
+        
+        Args:
+            week: Week number (1-4)
+            products: List of Product objects for this week
+            
+        Returns:
+            Tuple of (URL to the sheet tab, new_records_count, total_records_count)
+        """
+        if not self.sheet:
+            raise ValueError("Google Sheet not initialized")
+        
+        tab_name = f"Week {week}"
+        
+        try:
+            # Check if tab already exists
+            try:
+                worksheet = self.sheet.worksheet(tab_name)
+                logger.info(f"Tab '{tab_name}' already exists")
+                
+                # Get existing data to check for duplicates
+                existing_data = worksheet.get_all_values()
+                existing_count = len(existing_data) - 1 if len(existing_data) > 1 else 0
+                
+                # Format new products
+                new_rows = self.format_products_for_sheet(products)
+                # Remove header row since we're appending
+                new_rows = new_rows[1:]
+                
+                # Append new records
+                if new_rows:
+                    worksheet.append_rows(new_rows)
+                    logger.info(f"Added {len(new_rows)} new records to existing tab")
+                
+                new_records_count = len(new_rows)
+                total_records_count = existing_count + new_records_count
+                
+            except gspread.exceptions.WorksheetNotFound:
+                # Create new worksheet
+                worksheet = self.sheet.add_worksheet(
+                    title=tab_name,
+                    rows=len(products) + 100,
+                    cols=10
+                )
+                logger.info(f"Created new tab: {tab_name}")
+                
+                # Format data for output
+                rows = self.format_products_for_sheet(products)
+                
+                # Write data to sheet
+                worksheet.update('A1', rows)
+                
+                new_records_count = len(products)
+                total_records_count = len(products)
+                logger.info(f"Populated new tab '{tab_name}' with {len(products)} records")
+            
+            # Format header row (bold)
+            worksheet.format('A1:J1', {
+                'textFormat': {'bold': True},
+                'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
+            })
+            
+            # Auto-resize columns
+            worksheet.columns_auto_resize(0, 9)
+            
+            # Return URL to the worksheet
+            sheet_url = f"https://docs.google.com/spreadsheets/d/{self.sheet_id}/edit#gid={worksheet.id}"
+            return sheet_url, new_records_count, total_records_count
+            
+        except Exception as e:
+            logger.error(f"Error creating/updating tab '{tab_name}': {str(e)}")
+            raise
+    
+    def create_daily_tab(self, date_str: str, products: List[Product]) -> Tuple[str, int, int]:
+        """
+        Create or update a daily tab labeled with the date
+        
+        Args:
+            date_str: Date string in format 'YYYY-MM-DD'
+            products: List of Product objects for this day
+            
+        Returns:
+            Tuple of (URL to the sheet tab, new_records_count, total_records_count)
+        """
+        if not self.sheet:
+            raise ValueError("Google Sheet not initialized")
+        
+        # Tab name format: YYYY-MM-DD (e.g., "2024-01-15")
+        tab_name = date_str
+        
+        try:
+            # Check if tab already exists
+            try:
+                worksheet = self.sheet.worksheet(tab_name)
+                logger.info(f"Tab '{tab_name}' already exists, appending new data")
+                
+                # Get existing data to check for duplicates
+                existing_data = worksheet.get_all_values()
+                existing_count = len(existing_data) - 1 if len(existing_data) > 1 else 0
+                
+                # Format new products
+                new_rows = self.format_products_for_sheet(products)
+                # Remove header row since we're appending
+                new_rows = new_rows[1:]
+                
+                # Append new records
+                if new_rows:
+                    worksheet.append_rows(new_rows)
+                    logger.info(f"Added {len(new_rows)} new records to existing tab")
+                
+                new_records_count = len(new_rows)
+                total_records_count = existing_count + new_records_count
+                
+            except gspread.exceptions.WorksheetNotFound:
+                # Create new worksheet
+                worksheet = self.sheet.add_worksheet(
+                    title=tab_name,
+                    rows=len(products) + 100,
+                    cols=10
+                )
+                logger.info(f"Created new daily tab: {tab_name}")
+                
+                # Format data for output
+                rows = self.format_products_for_sheet(products)
+                
+                # Write data to sheet
+                worksheet.update('A1', rows)
+                
+                new_records_count = len(products)
+                total_records_count = len(products)
+                logger.info(f"Populated new tab '{tab_name}' with {len(products)} records")
+            
+            # Format header row (bold)
+            worksheet.format('A1:J1', {
+                'textFormat': {'bold': True},
+                'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
+            })
+            
+            # Auto-resize columns
+            worksheet.columns_auto_resize(0, 9)
+            
+            # Return URL to the worksheet
+            sheet_url = f"https://docs.google.com/spreadsheets/d/{self.sheet_id}/edit#gid={worksheet.id}"
+            return sheet_url, new_records_count, total_records_count
+            
+        except Exception as e:
+            logger.error(f"Error creating/updating daily tab '{tab_name}': {str(e)}")
+            raise
+    
+    def get_sheet_url(self) -> str:
+        """Get the base URL of the Google Sheet"""
+        return f"https://docs.google.com/spreadsheets/d/{self.sheet_id}/edit"
