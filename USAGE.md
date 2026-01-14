@@ -56,6 +56,12 @@ python run_project.py --week 2
 ```
 Manually specify which week to scrape (1-4).
 
+### Test Mode (200 Second Intervals)
+```bash
+python run_project.py --test-mode
+```
+Runs the workflow every 200 seconds instead of weekly. Useful for testing the scheduler functionality.
+
 ## Process Management
 
 ### Starting the Process

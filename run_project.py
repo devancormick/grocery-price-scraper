@@ -337,6 +337,11 @@ def main():
         action="store_true",
         help="Run once and exit (no continuous scheduling)"
     )
+    parser.add_argument(
+        "--test-mode",
+        action="store_true",
+        help="Test mode: schedule runs every 200 seconds instead of weekly"
+    )
     
     args = parser.parse_args()
     
@@ -348,6 +353,8 @@ def main():
         logger.info(f"Store limit: {args.store_limit} (testing mode)")
     if args.week:
         logger.info(f"Week override: {args.week}")
+    if args.test_mode:
+        logger.info("Test mode: Scheduling runs every 200 seconds")
     logger.info("=" * 80)
     
     # Run workflow immediately
@@ -360,7 +367,61 @@ def main():
         logger.info("=" * 80)
         return
     
-    # Calculate next Sunday at 10:00 AM EST
+    # Test mode: Schedule every 200 seconds
+    if args.test_mode:
+        TEST_INTERVAL = 200  # 200 seconds
+        logger.info("\n" + "=" * 80)
+        logger.info("Setting up test mode scheduler...")
+        logger.info("=" * 80)
+        logger.info(f"Test mode: Scheduling runs every {TEST_INTERVAL} seconds")
+        logger.info("The process will continue running and execute the workflow every 200 seconds.")
+        logger.info("Press Ctrl+C to stop")
+        logger.info("=" * 80)
+        
+        # Keep scheduler running indefinitely
+        try:
+            last_run_time = None
+            while True:
+                try:
+                    current_time = time.time()
+                    
+                    # Check if 200 seconds have passed since last run
+                    if last_run_time is None or (current_time - last_run_time) >= TEST_INTERVAL:
+                        # Time to run!
+                        logger.info("\n" + "=" * 80)
+                        logger.info(f"[INFO] Scheduled time reached: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                        logger.info("=" * 80)
+                        
+                        # Run the workflow
+                        try:
+                            if run_weekly_workflow(store_limit=args.store_limit, week=None):
+                                last_run_time = current_time
+                                logger.info("\n[SUCCESS] Workflow completed successfully")
+                                logger.info(f"Next run in {TEST_INTERVAL} seconds")
+                            else:
+                                logger.error(f"[ERROR] Workflow failed, will retry in {TEST_INTERVAL} seconds")
+                                last_run_time = current_time  # Still update time to prevent immediate retry
+                        except Exception as workflow_error:
+                            # Log error but don't stop scheduler
+                            logger.error(f"[ERROR] Workflow execution error: {workflow_error}", exc_info=True)
+                            logger.error(f"[ERROR] Will retry in {TEST_INTERVAL} seconds")
+                            last_run_time = current_time  # Still update time to prevent immediate retry
+                        
+                        logger.info("=" * 80)
+                        logger.info("Scheduler continues running...")
+                        logger.info("=" * 80)
+                    
+                except Exception as e:
+                    # Prevent unexpected errors from killing the scheduler
+                    logger.error(f"[ERROR] Error in scheduler loop: {e}", exc_info=True)
+                
+                time.sleep(10)  # Check every 10 seconds in test mode
+                
+        except KeyboardInterrupt:
+            logger.info("\n[INFO] Scheduler stopped by user")
+            sys.exit(0)
+    
+    # Production mode: Schedule for Sunday at 10:00 AM EST
     import pytz
     est = pytz.timezone('US/Eastern')
     next_sunday = calculate_next_sunday_10am_est()
