@@ -116,7 +116,7 @@ def generate_weekly_dataset(
     try:
         if GOOGLE_SHEETS_AVAILABLE:
             google_sheets = GoogleSheetsHandler()
-            logger.info("✅ Google Sheets handler initialized")
+            logger.info("[SUCCESS] Google Sheets handler initialized")
     except Exception as e:
         logger.warning(f"Could not initialize Google Sheets: {e}")
         summary.errors.append({'type': 'google_sheets_init', 'message': str(e)})
@@ -124,7 +124,7 @@ def generate_weekly_dataset(
     try:
         if EMAIL_AVAILABLE:
             email_handler = EmailHandler()
-            logger.info("✅ Email handler initialized")
+            logger.info("[SUCCESS] Email handler initialized")
     except Exception as e:
         logger.warning(f"Could not initialize email handler: {e}")
         summary.errors.append({'type': 'email_init', 'message': str(e)})
@@ -141,9 +141,9 @@ def generate_weekly_dataset(
     if temp_file.exists():
         try:
             temp_file.unlink()
-            logger.info(f"✅ Removed existing temporary file: {temp_file.name}")
+            logger.info(f"[SUCCESS] Removed existing temporary file: {temp_file.name}")
         except Exception as e:
-            logger.warning(f"⚠️  Could not remove existing temp file {temp_file.name}: {e}")
+            logger.warning(f"[WARNING]  Could not remove existing temp file {temp_file.name}: {e}")
     
     temp_storage = DataStorage(
         output_file=temp_file,
@@ -174,10 +174,10 @@ def generate_weekly_dataset(
                 summary.products_scraped += len(products)
                 summary.stores_processed += 1
                 
-                logger.info(f"  ✅ Scraped {len(products)} products")
+                logger.info(f"  [SUCCESS] Scraped {len(products)} products")
                 
             except Exception as e:
-                logger.error(f"  ❌ Error scraping {store.store_name}: {e}", exc_info=True)
+                logger.error(f"  [ERROR] Error scraping {store.store_name}: {e}", exc_info=True)
                 summary.errors.append({
                     'type': 'store_error',
                     'store': str(store),
@@ -194,7 +194,7 @@ def generate_weekly_dataset(
             summary.products_invalid += len(errors)
             
             if errors:
-                logger.warning(f"  ⚠️  {len(errors)} products failed validation")
+                logger.warning(f"  [WARNING]  {len(errors)} products failed validation")
             
             # Incremental filtering (only new products)
             new_products = incremental.filter_new_products(validated)
@@ -210,7 +210,7 @@ def generate_weekly_dataset(
             # Save to temporary storage for incremental tracking
             if new_products:
                 temp_storage.save_products(new_products, append=True)
-                logger.info(f"  ✅ Added {len(new_products)} new products to collection")
+                logger.info(f"  [SUCCESS] Added {len(new_products)} new products to collection")
     
     # Generate final weekly dataset
     logger.info("\n" + "=" * 80)
@@ -226,7 +226,7 @@ def generate_weekly_dataset(
     validated_final, final_errors = validator.validate_and_clean_products(all_weekly_products)
     
     if final_errors:
-        logger.warning(f"  ⚠️  {len(final_errors)} products failed final validation")
+        logger.warning(f"  [WARNING]  {len(final_errors)} products failed final validation")
     
     # Save final weekly dataset
     logger.info(f"Saving weekly dataset to {weekly_output}...")
@@ -246,7 +246,7 @@ def generate_weekly_dataset(
                 week, validated_final, month_year
             )
             summary.google_sheets_uploaded = True
-            logger.info(f"✅ Data uploaded to Google Sheets: {sheet_url}")
+            logger.info(f"[SUCCESS] Data uploaded to Google Sheets: {sheet_url}")
             logger.info(f"   Monthly Sheet: {month_year}")
             logger.info(f"   Week Tab: Week {week}")
             logger.info(f"   New records: {new_count}, Total records: {total_count}")
@@ -257,7 +257,7 @@ def generate_weekly_dataset(
                 'type': 'google_sheets_error',
                 'message': str(e)
             })
-            logger.warning("⚠️  Google Sheets upload failed, but continuing with email...")
+            logger.warning("[WARNING]  Google Sheets upload failed, but continuing with email...")
     else:
         if not google_sheets:
             logger.warning("Google Sheets handler not available")
@@ -288,9 +288,9 @@ def generate_weekly_dataset(
             )
             if email_sent:
                 summary.email_sent = True
-                logger.info("✅ Weekly report email sent")
+                logger.info("[SUCCESS] Weekly report email sent")
             else:
-                logger.warning("⚠️  Email sending failed")
+                logger.warning("[WARNING]  Email sending failed")
         except Exception as e:
             logger.error(f"Error sending email: {e}", exc_info=True)
             summary.errors.append({
@@ -351,7 +351,7 @@ def generate_weekly_dataset(
     
     # Print final summary
     logger.info("\n" + "=" * 80)
-    logger.info("✅ Weekly Dataset Generation Complete!")
+    logger.info("[SUCCESS] Weekly Dataset Generation Complete!")
     logger.info("=" * 80)
     logger.info(f"Dataset file: {weekly_output}")
     logger.info(f"Summary file: {summary_file}")
@@ -366,9 +366,9 @@ def generate_weekly_dataset(
     if temp_file.exists():
         try:
             temp_file.unlink()
-            logger.info(f"✅ Cleaned up temporary file: {temp_file.name}")
+            logger.info(f"[SUCCESS] Cleaned up temporary file: {temp_file.name}")
         except Exception as e:
-            logger.warning(f"⚠️  Could not delete temporary file {temp_file.name}: {e}")
+            logger.warning(f"[WARNING]  Could not delete temporary file {temp_file.name}: {e}")
     
     return weekly_output
 
@@ -415,18 +415,18 @@ def main():
         )
         
         if dataset_file:
-            print(f"\n✅ Weekly dataset generated successfully!")
-            print(f"📁 Dataset file: {dataset_file}")
+            print(f"\n[SUCCESS] Weekly dataset generated successfully!")
+            print(f"[FILE] Dataset file: {dataset_file}")
             sys.exit(0)
         else:
-            print("\n❌ Failed to generate dataset")
+            print("\n[ERROR] Failed to generate dataset")
             sys.exit(1)
             
     except KeyboardInterrupt:
-        logger.info("\n⚠️  Generation interrupted by user")
+        logger.info("\n[WARNING]  Generation interrupted by user")
         sys.exit(0)
     except Exception as e:
-        logger.error(f"❌ Error: {e}", exc_info=True)
+        logger.error(f"[ERROR] Error: {e}", exc_info=True)
         sys.exit(1)
 
 

@@ -38,35 +38,72 @@ logger = get_logger(__name__)
 
 def update_stores_json():
     """
-    Update stores.json using StoreLocator
+    Always fetch ALL stores from Publix API and update stores.json
+    This ensures we have the latest store data before scraping
     
     Returns:
         bool: True if update successful, False otherwise
     """
     logger.info("=" * 80)
-    logger.info("Step 1: Updating stores.json")
+    logger.info("Step 1: Fetching ALL stores from Publix API")
+    logger.info("=" * 80)
+    logger.info("This step will:")
+    logger.info("  - Always fetch ALL stores from Publix API")
+    logger.info("  - Update stores.json with the latest store data")
+    logger.info("  - Validate stores before proceeding to product scraping")
     logger.info("=" * 80)
     
     try:
         store_locator = StoreLocator(use_cache=True)
         
-        # Update/validate stores.json
-        if not store_locator.update_stores_json():
-            logger.error("❌ stores.json validation failed")
+        # Check current state
+        from src.publix_scraper.core.config import DATA_DIR
+        stores_file = DATA_DIR / "stores.json"
+        stores_exist = stores_file.exists()
+        
+        if stores_exist:
+            # Check if file has stores
+            all_stores_before = store_locator.get_all_target_stores()
+            logger.info(f"Current stores.json found: {len(all_stores_before)} stores")
+        else:
+            logger.info("stores.json not found.")
+        
+        # Always fetch stores from API to ensure we have the latest data
+        logger.info("Fetching ALL stores from Publix API to update stores.json...")
+        stores_dict = store_locator._fetch_stores_from_api()
+        
+        if len(stores_dict.get("FL", [])) == 0 and len(stores_dict.get("GA", [])) == 0:
+            logger.error("[ERROR] Failed to fetch stores from API")
+            logger.error("   Unable to fetch stores. Aborting.")
             return False
+        
+        # Save fetched stores to JSON
+        if not store_locator._save_stores_to_json(stores_dict):
+            logger.error("[ERROR] Failed to save stores to stores.json")
+            return False
+        
+        # Clear cache to reload
+        store_locator._stores_cache = None
         
         # Get all stores to verify
         all_stores = store_locator.get_all_target_stores()
         
-        logger.info(f"✅ Successfully updated/validated stores.json")
+        if len(all_stores) == 0:
+            logger.error("[ERROR] No stores found after update. Cannot proceed with scraping.")
+            return False
+        
+        logger.info(f"[SUCCESS] Successfully updated/validated stores.json")
         logger.info(f"   Total stores: {len(all_stores)}")
         logger.info(f"   FL stores: {len([s for s in all_stores if s.state == 'FL'])}")
         logger.info(f"   GA stores: {len([s for s in all_stores if s.state == 'GA'])}")
+        logger.info("=" * 80)
+        logger.info("[SUCCESS] Stores are ready. Proceeding to product scraping...")
+        logger.info("=" * 80)
         
         return True
         
     except Exception as e:
-        logger.error(f"❌ Failed to update stores.json: {e}", exc_info=True)
+        logger.error(f"[ERROR] Failed to update stores.json: {e}", exc_info=True)
         return False
 
 
@@ -99,15 +136,15 @@ def run_weekly_scraper(store_limit=None, week=None):
         )
         
         if dataset_file:
-            logger.info(f"✅ Weekly scraper completed successfully")
+            logger.info(f"[SUCCESS] Weekly scraper completed successfully")
             logger.info(f"   Dataset file: {dataset_file}")
             return dataset_file
         else:
-            logger.error("❌ Weekly scraper failed - no dataset generated")
+            logger.error("[ERROR] Weekly scraper failed - no dataset generated")
             return None
             
     except Exception as e:
-        logger.error(f"❌ Weekly scraper failed: {e}", exc_info=True)
+        logger.error(f"[ERROR] Weekly scraper failed: {e}", exc_info=True)
         return None
 
 
@@ -163,7 +200,7 @@ def generate_monthly_report(month_year: str):
         monthly_output = OUTPUT_DIR / f"{monthly_filename}.csv"
         monthly_df.to_csv(monthly_output, index=False)
         
-        logger.info(f"✅ Monthly report generated: {monthly_output}")
+        logger.info(f"[SUCCESS] Monthly report generated: {monthly_output}")
         logger.info(f"   Total products: {len(monthly_df)}")
         logger.info(f"   Total stores: {monthly_df['store'].nunique()}")
         logger.info(f"   Weeks covered: {sorted(monthly_df['week'].unique().tolist())}")
@@ -187,7 +224,7 @@ def generate_monthly_report(month_year: str):
         return monthly_output
         
     except Exception as e:
-        logger.error(f"❌ Failed to generate monthly report: {e}", exc_info=True)
+        logger.error(f"[ERROR] Failed to generate monthly report: {e}", exc_info=True)
         return None
 
 
@@ -214,11 +251,13 @@ def calculate_next_run_time():
 
 def schedule_next_run():
     """
-    Schedule next run using cron
+    Schedule next run using cron (Linux/Mac) or provide instructions for Windows
     
     Returns:
         bool: True if scheduled successfully
     """
+    import platform
+    
     logger.info("\n" + "=" * 80)
     logger.info("Step 4: Scheduling Next Run")
     logger.info("=" * 80)
@@ -226,6 +265,15 @@ def schedule_next_run():
     try:
         next_run = calculate_next_run_time()
         
+        # Check if running on Windows
+        if platform.system() == "Windows":
+            logger.warning("[WARNING] Cron scheduling is not available on Windows")
+            logger.warning("   Please use Windows Task Scheduler to schedule the next run")
+            logger.info(f"   Next run should be: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            logger.info(f"   Command to run: {sys.executable} {Path(__file__).absolute()}")
+            return False
+        
+        # Linux/Mac: Use cron
         # Convert to cron format
         # Cron format: minute hour day month weekday
         cron_minute = next_run.minute
@@ -256,7 +304,7 @@ def schedule_next_run():
                 check=False
             )
             current_crontab = result.stdout
-        except subprocess.CalledProcessError:
+        except (subprocess.CalledProcessError, FileNotFoundError):
             current_crontab = ""
         
         # Remove existing entry for this script if any
@@ -280,16 +328,16 @@ def schedule_next_run():
         process.communicate(input=new_crontab)
         
         if process.returncode == 0:
-            logger.info(f"✅ Next run scheduled successfully")
+            logger.info(f"[SUCCESS] Next run scheduled successfully")
             logger.info(f"   Next run: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
             logger.info(f"   Cron entry: {cron_entry.strip()}")
             return True
         else:
-            logger.error("❌ Failed to schedule next run")
+            logger.error("[ERROR] Failed to schedule next run")
             return False
             
     except Exception as e:
-        logger.error(f"❌ Error scheduling next run: {e}", exc_info=True)
+        logger.error(f"[ERROR] Error scheduling next run: {e}", exc_info=True)
         return False
 
 
@@ -333,7 +381,7 @@ def main():
     
     # Step 1: Update stores.json
     if not update_stores_json():
-        logger.error("❌ Store update failed. Aborting.")
+        logger.error("[ERROR] Store update failed. Aborting.")
         sys.exit(1)
     
     # Step 2: Run weekly scraper
@@ -342,7 +390,7 @@ def main():
         week=args.week
     )
     if not dataset_file:
-        logger.error("❌ Weekly scraper failed. Aborting.")
+        logger.error("[ERROR] Weekly scraper failed. Aborting.")
         sys.exit(1)
     
     # Step 3: Generate monthly report if last week of month
@@ -351,21 +399,21 @@ def main():
     is_last_week = is_last_week_of_month(current_date)
     
     if is_last_week:
-        logger.info(f"\n⚠️  Last week of month detected. Generating monthly report...")
+        logger.info(f"\n[WARNING] Last week of month detected. Generating monthly report...")
         monthly_report = generate_monthly_report(month_year)
         if monthly_report:
-            logger.info(f"✅ Monthly report generated: {monthly_report}")
+            logger.info(f"[SUCCESS] Monthly report generated: {monthly_report}")
         else:
-            logger.warning("⚠️  Monthly report generation failed, but continuing...")
+            logger.warning("[WARNING] Monthly report generation failed, but continuing...")
     
     # Step 4: Schedule next run (unless disabled)
     if not args.no_schedule:
         schedule_next_run()
     else:
-        logger.info("\n⚠️  Scheduling skipped (--no-schedule flag)")
+        logger.info("\n[INFO] Scheduling skipped (--no-schedule flag)")
     
     logger.info("\n" + "=" * 80)
-    logger.info("✅ Project Orchestration Complete!")
+    logger.info("[SUCCESS] Project Orchestration Complete!")
     logger.info("=" * 80)
     logger.info(f"Completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 80)
@@ -376,8 +424,8 @@ if __name__ == "__main__":
         main()
         sys.exit(0)
     except KeyboardInterrupt:
-        logger.info("\n⚠️  Orchestration interrupted by user")
+        logger.info("\n[WARNING] Orchestration interrupted by user")
         sys.exit(0)
     except Exception as e:
-        logger.error(f"❌ Fatal error: {e}", exc_info=True)
+        logger.error(f"[ERROR] Fatal error: {e}", exc_info=True)
         sys.exit(1)

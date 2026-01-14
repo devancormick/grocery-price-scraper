@@ -96,9 +96,9 @@ Files Created:
 {chr(10).join(f'  - {f}' for f in self.files_created) if self.files_created else '  None'}
 
 Integrations:
-  Google Sheets: {'✅' if self.google_sheets_uploaded else '❌'}
-  Email: {'✅' if self.email_sent else '❌'}
-  Webhook: {'✅' if self.webhook_sent else '❌'}
+  Google Sheets: {'[OK]' if self.google_sheets_uploaded else '[FAIL]'}
+  Email: {'[OK]' if self.email_sent else '[FAIL]'}
+  Webhook: {'[OK]' if self.webhook_sent else '[FAIL]'}
 
 Errors: {len(self.errors)}
 Warnings: {len(self.warnings)}

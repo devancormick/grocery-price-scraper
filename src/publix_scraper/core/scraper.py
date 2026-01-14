@@ -146,7 +146,7 @@ class PublixScraper:
         try:
             products = self._scrape_products_via_api(store, week, current_date)
             if products:
-                logger.info(f"✅ Scraped {len(products)} products via API from {store}")
+                logger.info(f"[SUCCESS] Scraped {len(products)} products via API from {store}")
         except Exception as e:
             logger.error(f"Error scraping store {store.store_id}: {e}", exc_info=True)
         
