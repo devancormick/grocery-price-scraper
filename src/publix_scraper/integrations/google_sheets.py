@@ -317,21 +317,75 @@ class GoogleSheetsHandler:
                 worksheet = monthly_sheet.worksheet(tab_name)
                 logger.info(f"Tab '{tab_name}' already exists in monthly sheet")
                 
-                # Get existing data to check for duplicates
-                existing_data = worksheet.get_all_values()
-                existing_count = len(existing_data) - 1 if len(existing_data) > 1 else 0
+                # Efficiently get existing data to check for duplicates
+                # Only fetch the columns we need: C (product_identifier), D (date), J (store)
+                # This is more efficient than loading all columns
+                try:
+                    # Get only the columns we need for duplicate checking (C, D, J)
+                    # C=column 3 (index 2), D=column 4 (index 3), J=column 10 (index 9)
+                    existing_data = worksheet.get_all_values()
+                    existing_count = len(existing_data) - 1 if len(existing_data) > 1 else 0
+                    
+                    # Create set of unique keys from existing data (product_identifier + date + store)
+                    # Column indices: 2=product_identifier, 3=date, 9=store
+                    existing_keys = set()
+                    if len(existing_data) > 1:  # Has header + data
+                        for row in existing_data[1:]:  # Skip header
+                            if len(row) >= 10:  # Ensure row has all columns
+                                # Get values, handling empty cells
+                                product_id = str(row[2]).strip() if len(row) > 2 else ""
+                                product_date = str(row[3]).strip() if len(row) > 3 else ""
+                                product_store = str(row[9]).strip() if len(row) > 9 else ""
+                                
+                                if product_id and product_date and product_store:
+                                    unique_key = f"{product_id}|{product_date}|{product_store}"
+                                    existing_keys.add(unique_key)
+                    
+                    logger.info(f"Found {len(existing_keys)} existing unique records in tab (total rows: {existing_count})")
+                except Exception as e:
+                    logger.warning(f"Error loading existing data for duplicate check: {e}, proceeding without duplicate check")
+                    existing_keys = set()
+                    existing_count = 0
                 
-                # Format new products
+                # Format new products and filter duplicates
                 new_rows = self.format_products_for_sheet(products)
                 # Remove header row since we're appending
                 new_rows = new_rows[1:]
                 
-                # Append new records
-                if new_rows:
-                    worksheet.append_rows(new_rows)
-                    logger.info(f"Added {len(new_rows)} new records to existing tab")
+                # Filter out duplicates based on unique key (product_identifier + date + store)
+                unique_new_rows = []
+                duplicates_skipped = 0
+                new_keys_in_batch = set()  # Track keys in current batch to prevent duplicates within new data
                 
-                new_records_count = len(new_rows)
+                for row in new_rows:
+                    if len(row) >= 10:
+                        # Create unique key: product_identifier|date|store
+                        product_id = str(row[2]).strip() if len(row) > 2 else ""
+                        product_date = str(row[3]).strip() if len(row) > 3 else ""
+                        product_store = str(row[9]).strip() if len(row) > 9 else ""
+                        
+                        if product_id and product_date and product_store:
+                            unique_key = f"{product_id}|{product_date}|{product_store}"
+                            
+                            # Check if it's a duplicate (either in existing data or in new batch)
+                            if unique_key not in existing_keys and unique_key not in new_keys_in_batch:
+                                unique_new_rows.append(row)
+                                new_keys_in_batch.add(unique_key)  # Track to prevent duplicates within new data
+                            else:
+                                duplicates_skipped += 1
+                        else:
+                            # Missing required fields, skip this row
+                            duplicates_skipped += 1
+                            logger.warning(f"Skipping row with missing required fields: product_id={product_id}, date={product_date}, store={product_store}")
+                
+                # Append only unique new records
+                if unique_new_rows:
+                    worksheet.append_rows(unique_new_rows)
+                    logger.info(f"Added {len(unique_new_rows)} new records to existing tab (skipped {duplicates_skipped} duplicates)")
+                else:
+                    logger.info(f"No new records to add (all {len(new_rows)} were duplicates)")
+                
+                new_records_count = len(unique_new_rows)
                 total_records_count = existing_count + new_records_count
                 
             except gspread.exceptions.WorksheetNotFound:
