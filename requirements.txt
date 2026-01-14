@@ -1,16 +1,29 @@
+# Core dependencies (required)
 requests>=2.31.0
-beautifulsoup4>=4.12.0
-lxml>=4.9.0
 pandas>=2.0.0
-selenium>=4.15.0
-webdriver-manager>=4.0.0
-python-dateutil>=2.8.0
-tqdm>=4.66.0
-schedule>=1.2.0
 python-dotenv>=1.0.0
+
+# Excel export support (optional but recommended)
+openpyxl>=3.1.0
+
+# Progress bars (optional)
+tqdm>=4.66.0
+
+# Scheduler support (optional)
+schedule>=1.2.0
+
+# Google Sheets integration (required for daily delivery)
 gspread>=5.12.0
 google-auth>=2.23.0
 google-auth-oauthlib>=1.1.0
 google-auth-httplib2>=0.1.1
-openpyxl>=3.1.0
-sqlalchemy>=2.0.0
+
+# Date/time utilities
+python-dateutil>=2.8.2
+pytz>=2023.3
+
+# Database support (optional - only if using database)
+# sqlalchemy>=2.0.0
+
+# Note: Selenium, BeautifulSoup, and lxml are NOT needed
+# The scraper uses the Publix API directly, no HTML parsing required
