@@ -17,8 +17,9 @@ Usage:
 import sys
 import argparse
 from pathlib import Path
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import json
+import time
 
 # Add project root to path
 project_root = Path(__file__).parent
@@ -155,14 +156,61 @@ def generate_weekly_dataset(
     # Collect products for this week
     all_weekly_products = []
     
+    # Chunk configuration
+    CSV_UPDATE_INTERVAL = 20  # Update CSV every 20 stores
+    SHEETS_UPDATE_INTERVAL = 20  # Update Google Sheets every 20 stores
+    EMAIL_UPDATE_INTERVAL = 500  # Send email update every 500 stores
+    
+    # Progress tracking
+    chunk_products = []  # Products collected in current chunk
+    start_time = time.time()
+    store_times = []  # Track time per store for ETA calculation
+    last_email_store_count = 0
+    
     logger.info("\n" + "=" * 80)
     logger.info(f"Starting Weekly Data Collection - Week {week}")
     logger.info("=" * 80)
+    logger.info(f"Chunk update intervals:")
+    logger.info(f"  - CSV update: every {CSV_UPDATE_INTERVAL} stores")
+    logger.info(f"  - Google Sheets update: every {SHEETS_UPDATE_INTERVAL} stores")
+    logger.info(f"  - Email progress update: every {EMAIL_UPDATE_INTERVAL} stores")
+    logger.info("=" * 80)
+    
+    # Initialize Google Sheets tab if available
+    sheet_url = None
+    worksheet = None
+    if google_sheets:
+        try:
+            monthly_sheet, sheet_id = google_sheets.get_or_create_monthly_sheet(month_year)
+            tab_name = f"{month_year} Week {week}"
+            try:
+                worksheet = monthly_sheet.worksheet(tab_name)
+                logger.info(f"Using existing Google Sheets tab: {tab_name}")
+            except:
+                worksheet = monthly_sheet.add_worksheet(
+                    title=tab_name,
+                    rows=1000,
+                    cols=10
+                )
+                # Write header
+                header = google_sheets.format_products_for_sheet([])[0]
+                worksheet.update('A1', [header])
+                worksheet.format('A1:J1', {
+                    'textFormat': {'bold': True},
+                    'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
+                })
+                logger.info(f"Created new Google Sheets tab: {tab_name}")
+            sheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit#gid={worksheet.id}"
+        except Exception as e:
+            logger.warning(f"Could not initialize Google Sheets tab: {e}")
+            google_sheets = None
     
     with scraper:
         logger.info(f"\nScraping Week {week} for all stores...")
         
         for idx, store in enumerate(all_stores, start=start_from):
+            store_start_time = time.time()
+            
             try:
                 logger.info(
                     f"[Week {week}] [{idx+1}/{len(all_stores)}] "
@@ -171,10 +219,87 @@ def generate_weekly_dataset(
                 
                 products = scraper.scrape_store_products(store, week)
                 all_weekly_products.extend(products)
+                chunk_products.extend(products)
                 summary.products_scraped += len(products)
                 summary.stores_processed += 1
                 
-                logger.info(f"  [SUCCESS] Scraped {len(products)} products")
+                # Track time per store
+                store_time = time.time() - store_start_time
+                store_times.append(store_time)
+                
+                logger.info(f"  [SUCCESS] Scraped {len(products)} products in {store_time:.1f}s")
+                
+                # Update CSV and Google Sheets every CSV_UPDATE_INTERVAL stores
+                if (idx + 1) % CSV_UPDATE_INTERVAL == 0:
+                    if chunk_products:
+                        # Validate chunk products
+                        validated_chunk, _ = validator.validate_and_clean_products(chunk_products)
+                        if validated_chunk:
+                            # Filter new products
+                            new_chunk = incremental.filter_new_products(validated_chunk)
+                            # Deduplicate
+                            new_chunk, _ = deduplicator.filter_new_records(new_chunk)
+                            
+                            if new_chunk:
+                                # Update CSV
+                                weekly_storage.save_products(new_chunk, append=True)
+                                logger.info(f"  [CSV UPDATE] Updated CSV with {len(new_chunk)} products from {CSV_UPDATE_INTERVAL} stores")
+                                
+                                # Update Google Sheets
+                                if google_sheets and worksheet:
+                                    try:
+                                        rows = google_sheets.format_products_for_sheet(new_chunk)
+                                        rows = rows[1:]  # Remove header
+                                        worksheet.append_rows(rows)
+                                        logger.info(f"  [SHEETS UPDATE] Updated Google Sheets with {len(new_chunk)} products")
+                                    except Exception as e:
+                                        logger.warning(f"  [WARNING] Could not update Google Sheets: {e}")
+                                
+                                chunk_products = []  # Clear chunk after processing
+                
+                # Send email progress update every EMAIL_UPDATE_INTERVAL stores
+                if email_handler and (idx + 1) % EMAIL_UPDATE_INTERVAL == 0:
+                    try:
+                        # Calculate progress
+                        stores_completed = idx + 1
+                        stores_remaining = len(all_stores) - stores_completed
+                        progress_percent = (stores_completed / len(all_stores)) * 100
+                        
+                        # Calculate ETA
+                        if store_times:
+                            avg_time_per_store = sum(store_times) / len(store_times)
+                            estimated_remaining_seconds = avg_time_per_store * stores_remaining
+                            estimated_remaining = timedelta(seconds=int(estimated_remaining_seconds))
+                            
+                            # Format ETA
+                            hours = estimated_remaining.seconds // 3600
+                            minutes = (estimated_remaining.seconds % 3600) // 60
+                            if estimated_remaining.days > 0:
+                                eta_str = f"{estimated_remaining.days} day(s), {hours}h {minutes}m"
+                            else:
+                                eta_str = f"{hours}h {minutes}m"
+                        else:
+                            eta_str = "Calculating..."
+                        
+                        # Get current product count
+                        current_products = len(all_weekly_products)
+                        
+                        # Send progress email
+                        email_handler.send_progress_update(
+                            week=week,
+                            stores_completed=stores_completed,
+                            stores_total=len(all_stores),
+                            stores_remaining=stores_remaining,
+                            progress_percent=progress_percent,
+                            products_found=current_products,
+                            estimated_remaining=eta_str,
+                            sheet_url=sheet_url or "N/A",
+                            month_year=month_year
+                        )
+                        logger.info(f"  [EMAIL UPDATE] Sent progress email: {stores_completed}/{len(all_stores)} stores ({progress_percent:.1f}%)")
+                        last_email_store_count = stores_completed
+                    except Exception as e:
+                        logger.warning(f"  [WARNING] Could not send progress email: {e}")
                 
             except Exception as e:
                 logger.error(f"  [ERROR] Error scraping {store.store_name}: {e}", exc_info=True)
@@ -185,6 +310,28 @@ def generate_weekly_dataset(
                     'message': str(e)
                 })
                 continue
+        
+        # Process remaining chunk products (if any stores didn't complete a full chunk)
+        if chunk_products:
+            validated_chunk, _ = validator.validate_and_clean_products(chunk_products)
+            if validated_chunk:
+                new_chunk = incremental.filter_new_products(validated_chunk)
+                new_chunk, _ = deduplicator.filter_new_records(new_chunk)
+                
+                if new_chunk:
+                    # Update CSV
+                    weekly_storage.save_products(new_chunk, append=True)
+                    logger.info(f"  [CSV UPDATE] Final CSV update with {len(new_chunk)} products from remaining stores")
+                    
+                    # Update Google Sheets
+                    if google_sheets and worksheet:
+                        try:
+                            rows = google_sheets.format_products_for_sheet(new_chunk)
+                            rows = rows[1:]
+                            worksheet.append_rows(rows)
+                            logger.info(f"  [SHEETS UPDATE] Final Google Sheets update with {len(new_chunk)} products")
+                        except Exception as e:
+                            logger.warning(f"  [WARNING] Could not update Google Sheets: {e}")
         
         # Validate and clean products for this week
         if all_weekly_products:
@@ -228,41 +375,26 @@ def generate_weekly_dataset(
     if final_errors:
         logger.warning(f"  [WARNING]  {len(final_errors)} products failed final validation")
     
-    # Save final weekly dataset
-    logger.info(f"Saving weekly dataset to {weekly_output}...")
+    # Save final weekly dataset (overwrite with complete dataset)
+    logger.info(f"Saving final weekly dataset to {weekly_output}...")
     weekly_storage.save_products(validated_final, append=False)
     
-    # Upload to Google Sheets (weekly tab in monthly sheet)
-    sheet_url = None
+    # Google Sheets was already updated incrementally, so we don't need to overwrite
+    # Just ensure we have the sheet URL for the final email
     new_count = summary.products_new
     total_count = len(validated_final)
     
-    if validated_final and google_sheets:
+    if not sheet_url and google_sheets:
         try:
-            logger.info("\n" + "=" * 80)
-            logger.info("Uploading to Google Sheets (Weekly Tab in Monthly Sheet)...")
-            
-            sheet_url, new_count, total_count, sheet_id = google_sheets.create_weekly_tab_in_monthly_sheet(
-                week, validated_final, month_year
-            )
-            summary.google_sheets_uploaded = True
-            logger.info(f"[SUCCESS] Data uploaded to Google Sheets: {sheet_url}")
-            logger.info(f"   Monthly Sheet: {month_year}")
-            logger.info(f"   Week Tab: Week {week}")
-            logger.info(f"   New records: {new_count}, Total records: {total_count}")
-                
-        except Exception as e:
-            logger.error(f"Error uploading to Google Sheets: {e}", exc_info=True)
-            summary.errors.append({
-                'type': 'google_sheets_error',
-                'message': str(e)
-            })
-            logger.warning("[WARNING]  Google Sheets upload failed, but continuing with email...")
-    else:
-        if not google_sheets:
-            logger.warning("Google Sheets handler not available")
-        if not validated_final:
-            logger.warning("No products to upload")
+            sheet_url = google_sheets.get_sheet_url()
+        except:
+            pass
+    
+    if google_sheets and worksheet:
+        summary.google_sheets_uploaded = True
+        logger.info(f"[SUCCESS] Google Sheets was updated incrementally during scraping")
+        logger.info(f"   Sheet URL: {sheet_url}")
+        logger.info(f"   Total records: {total_count}")
     
     # Send weekly email report (even if Google Sheets failed)
     if validated_final and email_handler:

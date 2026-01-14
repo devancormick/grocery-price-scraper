@@ -80,8 +80,8 @@ Week: {week}
             #     body += f"- Duplicate products: {product_count - new_count}\n"
             body += f"- Stores covered: {store_count}\n"
             body += f"- Week: {week}\n\n"
-            body += f"✅ Data has been successfully collected and uploaded to Google Sheets.\n\n"
-            body += f"📊 Google Sheet Link:\n{sheet_url}\n\n"
+            body += f"[SUCCESS] Data has been successfully collected and uploaded to Google Sheets.\n\n"
+            body += f"Google Sheet Link:\n{sheet_url}\n\n"
             
             if csv_path:
                 body += f"""
@@ -171,6 +171,97 @@ This is an automated error notification from the Publix Price Scraper system.
             logger.error(f"Error sending error notification email: {str(e)}")
             return False
     
+    def send_progress_update(
+        self,
+        week: int,
+        stores_completed: int,
+        stores_total: int,
+        stores_remaining: int,
+        progress_percent: float,
+        products_found: int,
+        estimated_remaining: str,
+        sheet_url: str,
+        month_year: str = None
+    ) -> bool:
+        """
+        Send progress update email during scraping
+        
+        Args:
+            week: Week number (1-4)
+            stores_completed: Number of stores completed
+            stores_total: Total number of stores
+            stores_remaining: Number of stores remaining
+            progress_percent: Progress percentage
+            products_found: Number of products found so far
+            estimated_remaining: Estimated time remaining (formatted string)
+            sheet_url: URL to the Google Sheet
+            month_year: Month-year string like "2024-01" (optional)
+        
+        Returns:
+            True if email sent successfully
+        """
+        if not self.email_to:
+            logger.warning("No email recipients configured")
+            return False
+        
+        try:
+            # Create message
+            msg = MIMEMultipart()
+            msg['From'] = self.email_from
+            msg['To'] = ', '.join(self.email_to)
+            
+            subject = f"Publix Scraper Progress - Week {week}"
+            if month_year:
+                subject += f" ({month_year})"
+            subject += f" - {progress_percent:.1f}% Complete"
+            msg['Subject'] = subject
+            
+            # Create email body
+            body = f"""
+Publix Grocery Store Price Scraping - Progress Update
+
+Week: {week}
+"""
+            if month_year:
+                body += f"Month: {month_year}\n"
+            body += f"Update Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            
+            body += f"Progress Summary:\n"
+            body += f"- Stores Completed: {stores_completed:,} / {stores_total:,}\n"
+            body += f"- Stores Remaining: {stores_remaining:,}\n"
+            body += f"- Progress: {progress_percent:.1f}%\n"
+            body += f"- Products Found So Far: {products_found:,}\n"
+            body += f"- Estimated Time Remaining: {estimated_remaining}\n\n"
+            
+            body += f"Current Status:\n"
+            body += f"[OK] CSV file is being updated every 20 stores\n"
+            body += f"[OK] Google Sheets is being updated every 20 stores\n"
+            body += f"[OK] You can view the latest data in the Google Sheet\n\n"
+            
+            body += f"Google Sheet Link:\n{sheet_url}\n\n"
+            
+            body += f"""
+The scraping process is running smoothly. You will receive another update after {stores_remaining} more stores are processed, or when the scraping completes.
+
+---
+This is an automated progress update from the Publix Price Scraper system.
+"""
+            
+            msg.attach(MIMEText(body, 'plain'))
+            
+            # Send email
+            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+                server.starttls()
+                server.login(self.smtp_username, self.smtp_password)
+                server.send_message(msg)
+            
+            logger.info(f"Progress update email sent successfully to {', '.join(self.email_to)}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error sending progress update email: {str(e)}")
+            return False
+    
     def send_daily_report(
         self,
         date: str,
@@ -218,16 +309,16 @@ Summary:
 - Duplicate products: {product_count - new_count}
 - Stores covered: {store_count}
 
-✅ Data has been successfully collected and uploaded to Google Sheets.
+[SUCCESS] Data has been successfully collected and uploaded to Google Sheets.
 
-📊 Google Sheet Link:
+Google Sheet Link:
 {sheet_url}
 
 """
             
             if csv_path:
                 body += f"""
-📎 A CSV backup file is attached to this email.
+[ATTACHMENT] A CSV backup file is attached to this email.
    File: {os.path.basename(csv_path)}
 """
             
