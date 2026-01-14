@@ -9,7 +9,7 @@ from google.oauth2.service_account import Credentials
 from ..core.config import GOOGLE_SHEETS_CREDENTIALS_PATH, GOOGLE_SHEET_ID, DATE_FORMAT
 from ..core.models import Product
 from ..utils.logging_config import get_logger
-from ..utils.week_calculator import get_month_year_string
+from ..utils.week_calculator import get_month_year_string, get_week_of_month
 
 logger = get_logger(__name__)
 
@@ -245,7 +245,7 @@ class GoogleSheetsHandler:
     
     def get_or_create_monthly_sheet(self, month_year: str = None) -> Tuple[gspread.Spreadsheet, str]:
         """
-        Get or create a monthly sheet for the given month-year
+        Get or use the configured Google Sheet (use existing sheet instead of creating new ones)
         
         Args:
             month_year: Month-year string in format "YYYY-MM" (default: current month)
@@ -256,13 +256,18 @@ class GoogleSheetsHandler:
         if month_year is None:
             month_year = get_month_year_string()
         
+        # Use the configured sheet instead of creating new ones
+        if self.sheet and self.sheet_id:
+            logger.info(f"Using configured Google Sheet: {self.sheet.title} (ID: {self.sheet_id})")
+            logger.info(f"Will add weekly tab for {month_year}")
+            return self.sheet, self.sheet_id
+        
+        # Fallback: Try to find or create monthly sheet (only if no configured sheet)
         sheet_title = f"Publix Soda Prices - {month_year}"
         
         try:
             # Try to find existing sheet by title
-            # Search through all spreadsheets the service account has access to
             try:
-                # List all spreadsheets
                 all_sheets = self.client.openall()
                 for sheet in all_sheets:
                     if sheet.title == sheet_title:
@@ -273,14 +278,9 @@ class GoogleSheetsHandler:
                 logger.info(f"Monthly sheet '{sheet_title}' not found, creating new one...")
                 sheet = self.client.create(sheet_title)
                 logger.info(f"Created new monthly sheet: {sheet_title} (ID: {sheet.id})")
-                
-                # Note: The sheet is automatically accessible to the service account
-                # If you need to share with other users, add sharing logic here
-                
                 return sheet, sheet.id
                 
             except Exception as search_error:
-                # If search fails, try to create new sheet
                 logger.warning(f"Error searching for sheet: {search_error}, creating new one...")
                 sheet = self.client.create(sheet_title)
                 logger.info(f"Created new monthly sheet: {sheet_title} (ID: {sheet.id})")
@@ -305,10 +305,11 @@ class GoogleSheetsHandler:
         if month_year is None:
             month_year = get_month_year_string()
         
-        # Get or create the monthly sheet
+        # Get or use the configured sheet
         monthly_sheet, sheet_id = self.get_or_create_monthly_sheet(month_year)
         
-        tab_name = f"Week {week}"
+        # Tab name format: "YYYY-MM Week N" (e.g., "2026-01 Week 2")
+        tab_name = f"{month_year} Week {week}"
         
         try:
             # Check if tab already exists
