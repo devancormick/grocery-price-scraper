@@ -330,8 +330,8 @@ Examples:
         logger.info("=" * 80)
         logger.info("Scraping completed successfully!")
         logger.info(f"Total products scraped: {summary.products_scraped}")
-        logger.info(f"New products: {summary.products_new}")
-        logger.info(f"Duplicates: {summary.products_duplicate}")
+        # logger.info(f"New products: {summary.products_new}")
+        # logger.info(f"Duplicates: {summary.products_duplicate}")
         logger.info(f"Duration: {summary.get_duration()}")
         logger.info("=" * 80)
         
