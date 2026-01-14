@@ -13,6 +13,7 @@ Usage:
     python3 run_project.py
 """
 import sys
+import argparse
 import subprocess
 import json
 from pathlib import Path
@@ -69,9 +70,13 @@ def update_stores_json():
         return False
 
 
-def run_weekly_scraper():
+def run_weekly_scraper(store_limit=None, week=None):
     """
     Run the weekly scraper
+    
+    Args:
+        store_limit: Limit number of stores to scrape (for testing)
+        week: Week number (1-4). If None, uses current week of month
     
     Returns:
         Path to generated CSV file or None if failed
@@ -80,10 +85,15 @@ def run_weekly_scraper():
     logger.info("Step 2: Running Weekly Scraper")
     logger.info("=" * 80)
     
+    if store_limit:
+        logger.info(f"   Store limit: {store_limit} (testing mode)")
+    if week:
+        logger.info(f"   Week: {week} (manual override)")
+    
     try:
         dataset_file = generate_weekly_dataset(
-            store_limit=None,  # All stores
-            week=None,  # Use current week of month
+            store_limit=store_limit,
+            week=week,
             output_format="csv",
             start_from=0
         )
@@ -285,10 +295,40 @@ def schedule_next_run():
 
 def main():
     """Main orchestrator function"""
+    parser = argparse.ArgumentParser(
+        description="Publix Price Scraper - Project Orchestrator"
+    )
+    parser.add_argument(
+        "--store-limit",
+        type=int,
+        default=None,
+        help="Limit number of stores to scrape (for testing)"
+    )
+    parser.add_argument(
+        "--week",
+        type=int,
+        choices=[1, 2, 3, 4],
+        default=None,
+        help="Week number (1-4). If not specified, uses current week of month"
+    )
+    parser.add_argument(
+        "--no-schedule",
+        action="store_true",
+        help="Skip scheduling next run (useful for testing)"
+    )
+    
+    args = parser.parse_args()
+    
     logger.info("=" * 80)
     logger.info("Publix Price Scraper - Project Orchestrator")
     logger.info("=" * 80)
     logger.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    if args.store_limit:
+        logger.info(f"Store limit: {args.store_limit} (testing mode)")
+    if args.week:
+        logger.info(f"Week override: {args.week}")
+    if args.no_schedule:
+        logger.info("Scheduling disabled (--no-schedule)")
     logger.info("=" * 80)
     
     # Step 1: Update stores.json
@@ -297,7 +337,10 @@ def main():
         sys.exit(1)
     
     # Step 2: Run weekly scraper
-    dataset_file = run_weekly_scraper()
+    dataset_file = run_weekly_scraper(
+        store_limit=args.store_limit,
+        week=args.week
+    )
     if not dataset_file:
         logger.error("❌ Weekly scraper failed. Aborting.")
         sys.exit(1)
@@ -315,8 +358,11 @@ def main():
         else:
             logger.warning("⚠️  Monthly report generation failed, but continuing...")
     
-    # Step 4: Schedule next run
-    schedule_next_run()
+    # Step 4: Schedule next run (unless disabled)
+    if not args.no_schedule:
+        schedule_next_run()
+    else:
+        logger.info("\n⚠️  Scheduling skipped (--no-schedule flag)")
     
     logger.info("\n" + "=" * 80)
     logger.info("✅ Project Orchestration Complete!")
