@@ -1,0 +1,46 @@
+services:
+  scraper:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: grocery-price-scraper
+    restart: unless-stopped
+    environment:
+      # Load from .env file
+      - MODE=${MODE:-production}
+      - TEST_INTERVAL_SECONDS=${TEST_INTERVAL_SECONDS:-300}
+      - PRODUCTION_CRON_HOUR=${PRODUCTION_CRON_HOUR:-2}
+      - PRODUCTION_CRON_MINUTE=${PRODUCTION_CRON_MINUTE:-0}
+      # Google Sheets
+      - GOOGLE_SHEETS_CREDENTIALS_PATH=/app/service_account.json
+      - GOOGLE_SHEET_ID=${GOOGLE_SHEET_ID:-}
+      # Email
+      - SMTP_SERVER=${SMTP_SERVER:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL_FROM=${EMAIL_FROM:-}
+      - EMAIL_TO=${EMAIL_TO:-}
+      # Output
+      - OUTPUT_DIR=/app/output/csv
+    volumes:
+      # Persist data, logs, and output
+      - ../data:/app/data
+      - ../logs:/app/logs
+      - ../output:/app/output
+      # Mount credentials (read-only)
+      - ../service_account.json:/app/service_account.json:ro
+      # Mount .env file
+      - ../.env:/app/.env:ro
+    networks:
+      - scraper-network
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  scraper-network:
+    driver: bridge
